@@ -65,6 +65,7 @@ Artifacts:
 
 - Default server URL on the connect screen: `ws://localhost:8080/ws` (adjust for `wss://` behind a proxy as needed).
 - Entry point: `lib/main.dart`. Main chat UI: `lib/screens/chat_screen.dart`.
+- The connect screen can set **24-hour clock** and **built-in chat theme**; those values persist in SharedPreferences (`marchat_chat_twenty_four_hour`, `marchat_chat_theme_id`) and stay in sync when you use `:time`, `:theme`, or Ctrl+T in chat.
 
 ### E2E and keystore
 

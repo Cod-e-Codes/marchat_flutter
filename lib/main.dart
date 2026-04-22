@@ -5,8 +5,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:path/path.dart' as p;
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'app_config.dart';
+import 'chat_themes.dart';
 import 'marchat_keystore.dart';
 import 'mc_crypto.dart';
 import 'screens/chat_screen.dart';
@@ -49,6 +51,36 @@ class _ConfigScreenState extends State<ConfigScreen> {
   bool _enableE2E = false;
   bool _busy = false;
   String? _keystorePath;
+  bool _twentyFourHour = true;
+  String _chatThemeId = 'modern';
+
+  static const _pref24h = 'marchat_chat_twenty_four_hour';
+  static const _prefTheme = 'marchat_chat_theme_id';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDisplayPrefs();
+  }
+
+  Future<void> _loadDisplayPrefs() async {
+    final p = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() {
+      _twentyFourHour = p.getBool(_pref24h) ?? true;
+      var tid = p.getString(_prefTheme) ?? 'modern';
+      if (!kMcBuiltinChatThemes.any((e) => e.id == tid)) {
+        tid = 'modern';
+      }
+      _chatThemeId = tid;
+    });
+  }
+
+  Future<void> _persistDisplayPrefs() async {
+    final p = await SharedPreferences.getInstance();
+    await p.setBool(_pref24h, _twentyFourHour);
+    await p.setString(_prefTheme, _chatThemeId);
+  }
 
   @override
   void dispose() {
@@ -94,7 +126,9 @@ class _ConfigScreenState extends State<ConfigScreen> {
           if (raw32 == null && mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
-                content: Text('MARCHAT_GLOBAL_E2E_KEY is set but is not valid base64 32-byte key.'),
+                content: Text(
+                  'MARCHAT_GLOBAL_E2E_KEY is set but is not valid base64 32-byte key.',
+                ),
               ),
             );
             setState(() => _busy = false);
@@ -120,8 +154,9 @@ class _ConfigScreenState extends State<ConfigScreen> {
         }
 
         if (raw32 == null) {
-          final stored =
-              await const FlutterSecureStorage().read(key: 'global_e2e_key');
+          final stored = await const FlutterSecureStorage().read(
+            key: 'global_e2e_key',
+          );
           if (stored != null && stored.trim().isNotEmpty) {
             raw32 = MarchatGlobalE2E.tryDecodeGlobalKeyBase64(stored.trim());
           }
@@ -146,7 +181,9 @@ class _ConfigScreenState extends State<ConfigScreen> {
             if (!mounted) return;
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
-                content: Text('Enter the keystore passphrase to unlock keystore.dat.'),
+                content: Text(
+                  'Enter the keystore passphrase to unlock keystore.dat.',
+                ),
               ),
             );
             setState(() => _busy = false);
@@ -170,9 +207,9 @@ class _ConfigScreenState extends State<ConfigScreen> {
             );
           } on MarchatKeystoreException catch (e) {
             if (!mounted) return;
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('$e')),
-            );
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(SnackBar(content: Text('$e')));
             setState(() => _busy = false);
             return;
           }
@@ -184,8 +221,8 @@ class _ConfigScreenState extends State<ConfigScreen> {
       final cfg = MarchatClientConfig(
         username: _username.text.trim(),
         serverURL: _server.text.trim(),
-        twentyFourHour: true,
-        chatThemeId: 'modern',
+        twentyFourHour: _twentyFourHour,
+        chatThemeId: _chatThemeId,
       );
 
       if (!mounted) return;
@@ -208,10 +245,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('marchat — connect'),
-        centerTitle: true,
-      ),
+      appBar: AppBar(title: const Text('marchat — connect'), centerTitle: true),
       body: AbsorbPointer(
         absorbing: _busy,
         child: Padding(
@@ -239,6 +273,46 @@ class _ConfigScreenState extends State<ConfigScreen> {
                   ),
                   validator: (v) =>
                       (v == null || v.trim().isEmpty) ? 'Required' : null,
+                ),
+                const SizedBox(height: 8),
+                SwitchListTile(
+                  title: const Text('24-hour clock in chat'),
+                  value: _twentyFourHour,
+                  onChanged: _busy
+                      ? null
+                      : (v) {
+                          setState(() => _twentyFourHour = v);
+                          _persistDisplayPrefs();
+                        },
+                ),
+                InputDecorator(
+                  decoration: const InputDecoration(
+                    labelText: 'Chat theme (built-in)',
+                    border: OutlineInputBorder(),
+                  ),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<String>(
+                      isExpanded: true,
+                      value:
+                          kMcBuiltinChatThemes.any((e) => e.id == _chatThemeId)
+                          ? _chatThemeId
+                          : kMcBuiltinChatThemes.first.id,
+                      items: [
+                        for (final t in kMcBuiltinChatThemes)
+                          DropdownMenuItem(
+                            value: t.id,
+                            child: Text('${t.name} (${t.id})'),
+                          ),
+                      ],
+                      onChanged: _busy
+                          ? null
+                          : (v) {
+                              if (v == null) return;
+                              setState(() => _chatThemeId = v);
+                              _persistDisplayPrefs();
+                            },
+                    ),
+                  ),
                 ),
                 const SizedBox(height: 8),
                 CheckboxListTile(
@@ -316,10 +390,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
                     'If the TUI created your key, it lives in keystore.dat under the '
                     'client config directory (or cwd). Copy that file here and use the '
                     'same passphrase. MARCHAT_GLOBAL_E2E_KEY still overrides when set.',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: Colors.grey.shade500,
-                    ),
+                    style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
                   ),
                 ],
                 const SizedBox(height: 20),

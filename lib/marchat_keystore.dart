@@ -17,7 +17,16 @@ class MarchatKeystoreException implements Exception {
 }
 
 abstract final class MarchatKeystore {
-  static const _magic = [0x6d, 0x61, 0x72, 0x63, 0x68, 0x61, 0x74, 0x6b]; // "marchatk"
+  static const _magic = [
+    0x6d,
+    0x61,
+    0x72,
+    0x63,
+    0x68,
+    0x61,
+    0x74,
+    0x6b,
+  ]; // "marchatk"
   static const _formatV3 = 3;
   static const _headerLen = 8 + 1 + 16;
 
@@ -58,14 +67,14 @@ abstract final class MarchatKeystore {
   }
 
   static Future<SecretKey> _deriveKey(List<int> passphrase, List<int> salt) {
-    return _pbkdf2.deriveKey(
-      secretKey: SecretKey(passphrase),
-      nonce: salt,
-    );
+    return _pbkdf2.deriveKey(secretKey: SecretKey(passphrase), nonce: salt);
   }
 
   /// Go `decryptData`: nonce || ciphertext+tag (nonce length = GCM nonce size).
-  static Future<Uint8List> _aesGcmDecrypt(SecretKey aesKey, Uint8List blob) async {
+  static Future<Uint8List> _aesGcmDecrypt(
+    SecretKey aesKey,
+    Uint8List blob,
+  ) async {
     try {
       final box = SecretBox.fromConcatenation(
         blob,
@@ -100,7 +109,9 @@ abstract final class MarchatKeystore {
     } else if (keyField is List) {
       raw = Uint8List.fromList(keyField.cast<int>());
     } else {
-      throw MarchatKeystoreException('Keystore global_key.key has invalid type');
+      throw MarchatKeystoreException(
+        'Keystore global_key.key has invalid type',
+      );
     }
     if (raw.length != 32) {
       throw MarchatKeystoreException(

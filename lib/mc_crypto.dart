@@ -37,23 +37,24 @@ class MarchatGlobalE2E {
     }
   }
 
-  Future<ChatWireMessage> encryptOutgoingText(String sender, String plainText) async {
+  Future<ChatWireMessage> encryptOutgoingText(
+    String sender,
+    String plainText,
+  ) async {
+    final createdUtc = DateTime.now().toUtc();
     final innerMap = <String, dynamic>{
       'sender': sender,
       'content': plainText,
       'type': WireTypes.text,
-      'created_at': DateTime.now().toUtc().toIso8601String(),
+      'created_at': createdUtc.toIso8601String(),
     };
     final innerBytes = utf8.encode(jsonEncode(innerMap));
-    final box = await _cipher.encrypt(
-      innerBytes,
-      secretKey: _secretKey,
-    );
+    final box = await _cipher.encrypt(innerBytes, secretKey: _secretKey);
     final packed = box.concatenation();
     return ChatWireMessage(
       sender: sender,
       content: base64Encode(packed),
-      createdAt: DateTime.now(),
+      createdAt: createdUtc,
       type: WireTypes.text,
       encrypted: true,
     );
@@ -74,10 +75,7 @@ class MarchatGlobalE2E {
 
   /// Raw binary encrypt: nonce || ciphertext||tag (matches `KeyStore.EncryptRaw`).
   Future<Uint8List> encryptRaw(Uint8List data) async {
-    final box = await _cipher.encrypt(
-      data,
-      secretKey: _secretKey,
-    );
+    final box = await _cipher.encrypt(data, secretKey: _secretKey);
     return box.concatenation();
   }
 
@@ -88,6 +86,8 @@ class MarchatGlobalE2E {
       macLength: _cipher.macAlgorithm.macLength,
       copy: false,
     );
-    return Uint8List.fromList(await _cipher.decrypt(box, secretKey: _secretKey));
+    return Uint8List.fromList(
+      await _cipher.decrypt(box, secretKey: _secretKey),
+    );
   }
 }

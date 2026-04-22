@@ -5,6 +5,8 @@ import 'dart:typed_data';
 abstract final class WireTypes {
   static const text = 'text';
   static const file = 'file';
+
+  /// Matches Go `shared.AdminCommandType` (`"admin_command"`).
   static const adminCommand = 'admin_command';
   static const edit = 'edit';
   static const delete = 'delete';
@@ -31,10 +33,10 @@ class WireFileMeta {
   });
 
   Map<String, dynamic> toJson() => {
-        'filename': filename,
-        'size': size,
-        'data': base64Encode(data),
-      };
+    'filename': filename,
+    'size': size,
+    'data': base64Encode(data),
+  };
 
   factory WireFileMeta.fromJson(Map<String, dynamic> j) {
     final raw = j['data'];
@@ -125,6 +127,7 @@ class ChatWireMessage {
       'content': content,
       'created_at': createdAt.toUtc().toIso8601String(),
     };
+    // Omit `type` for plain text so JSON matches Go `omitempty` on default `text`.
     if (type.isNotEmpty && type != WireTypes.text) {
       m['type'] = type;
     }
@@ -136,6 +139,36 @@ class ChatWireMessage {
     if (file != null) m['file'] = file!.toJson();
     if (reaction != null) m['reaction'] = reaction;
     return m;
+  }
+
+  ChatWireMessage copyWith({
+    String? sender,
+    String? content,
+    DateTime? createdAt,
+    String? type,
+    bool? encrypted,
+    int? messageId,
+    String? recipient,
+    String? channel,
+    bool? edited,
+    WireFileMeta? file,
+    Map<String, dynamic>? reaction,
+    bool clearFile = false,
+    bool clearReaction = false,
+  }) {
+    return ChatWireMessage(
+      sender: sender ?? this.sender,
+      content: content ?? this.content,
+      createdAt: createdAt ?? this.createdAt,
+      type: type ?? this.type,
+      encrypted: encrypted ?? this.encrypted,
+      messageId: messageId ?? this.messageId,
+      recipient: recipient ?? this.recipient,
+      channel: channel ?? this.channel,
+      edited: edited ?? this.edited,
+      file: clearFile ? null : (file ?? this.file),
+      reaction: clearReaction ? null : (reaction ?? this.reaction),
+    );
   }
 
   /// Plain global-channel text (matches Go `shared.Message` defaults).

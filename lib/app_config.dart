@@ -3,6 +3,7 @@ class MarchatClientConfig {
   String username;
   String serverURL;
   bool twentyFourHour;
+
   /// Last selected built-in chat theme id (`system`, `patriot`, `retro`, `modern`).
   String chatThemeId;
 
@@ -14,11 +15,11 @@ class MarchatClientConfig {
   });
 
   Map<String, dynamic> toJson() => {
-        'username': username,
-        'serverURL': serverURL,
-        'twentyFourHour': twentyFourHour,
-        'chatThemeId': chatThemeId,
-      };
+    'username': username,
+    'serverURL': serverURL,
+    'twentyFourHour': twentyFourHour,
+    'chatThemeId': chatThemeId,
+  };
 
   factory MarchatClientConfig.fromJson(Map<String, dynamic> json) =>
       MarchatClientConfig(

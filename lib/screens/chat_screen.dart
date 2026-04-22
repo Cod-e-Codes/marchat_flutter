@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../app_config.dart';
@@ -15,6 +16,28 @@ import '../wire_message.dart';
 
 const int _kMaxTranscriptMessages = 2000;
 const Duration _kReconnectMax = Duration(seconds: 30);
+
+const String _pref24h = 'marchat_chat_twenty_four_hour';
+const String _prefTheme = 'marchat_chat_theme_id';
+
+String _xmlEscapeForToast(String s) {
+  return s
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;');
+}
+
+/// Windows PowerShell `-EncodedCommand` expects UTF-16LE of the script bytes.
+String _powershellEncodedCommand(String script) {
+  final bytes = <int>[];
+  for (var i = 0; i < script.length; i++) {
+    final u = script.codeUnitAt(i);
+    bytes.add(u & 0xFF);
+    bytes.add(u >> 8);
+  }
+  return base64Encode(bytes);
+}
 
 enum _NotifyMode { none, bell, desktop, both }
 
@@ -69,6 +92,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
   bool _showMsgMeta = false;
 
+  late final String _helpBodyText;
+
   bool _bellEnabled = true;
   bool _bellMentionOnly = false;
   _NotifyMode _notifyMode = _NotifyMode.bell;
@@ -87,11 +112,43 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
+    _helpBodyText = _buildHelpBody();
     _twentyFourHour = widget.config.twentyFourHour;
     final tid = widget.config.chatThemeId.toLowerCase();
     final idx = kMcBuiltinChatThemes.indexWhere((e) => e.id == tid);
     _themeIndex = idx >= 0 ? idx : 3;
     _connect();
+  }
+
+  Future<void> _persistChatDisplayPrefs() async {
+    final p = await SharedPreferences.getInstance();
+    await p.setBool(_pref24h, _twentyFourHour);
+    await p.setString(_prefTheme, widget.config.chatThemeId);
+  }
+
+  String _buildHelpBody() {
+    final sb = StringBuffer()
+      ..writeln(
+        'Session: ${widget.e2e != null ? "E2E (global key)" : "Plain text"}',
+      )
+      ..writeln('Shortcuts: Ctrl+H help · Ctrl+T theme · Enter send')
+      ..writeln()
+      ..writeln(':sendfile [path]  :savefile <name|id:n>  :code')
+      ..writeln(':theme <id>  :themes  :time  :msginfo  :clear  :export [file]')
+      ..writeln(
+        ':bell  :bell-mention  :notify-mode …  :notify-desktop  :notify-status',
+      )
+      ..writeln(':quiet h h  :quiet-off  :focus [dur]  :focus-off')
+      ..writeln(':dm [user [msg]]  :join  :leave  :channels')
+      ..writeln(':edit :delete :search :react :pin :pinned')
+      ..writeln(':q quit');
+    if (widget.isAdmin) {
+      sb
+        ..writeln()
+        ..writeln('Admin: :kick :ban :unban :allow :forcedisconnect')
+        ..writeln(':cleardb :backup :stats  plugin :list :store …');
+    }
+    return sb.toString();
   }
 
   @override
@@ -145,11 +202,11 @@ class _ChatScreenState extends State<ChatScreen> {
         onDone: () => _onDisconnect('closed'),
       );
 
-      setState(() {
-        _connected = true;
-        _statusLine = 'Connected';
-        _reconnectDelay = const Duration(seconds: 1);
-      });
+      if (mounted) {
+        setState(() {
+          _reconnectDelay = const Duration(seconds: 1);
+        });
+      }
     } catch (e) {
       _onDisconnect('$e');
     }
@@ -165,8 +222,10 @@ class _ChatScreenState extends State<ChatScreen> {
     });
     _reconnectTimer?.cancel();
     _reconnectTimer = Timer(_reconnectDelay, _connect);
-    final next = (_reconnectDelay.inMilliseconds * 2)
-        .clamp(1000, _kReconnectMax.inMilliseconds);
+    final next = (_reconnectDelay.inMilliseconds * 2).clamp(
+      1000,
+      _kReconnectMax.inMilliseconds,
+    );
     _reconnectDelay = Duration(milliseconds: next);
   }
 
@@ -175,16 +234,20 @@ class _ChatScreenState extends State<ChatScreen> {
       final data = jsonDecode(raw as String);
       if (data is! Map<String, dynamic>) return;
 
+      if (!_connected && mounted) {
+        setState(() {
+          _connected = true;
+          _statusLine = 'Connected';
+        });
+      }
+
       if (data['sender'] != null && (data['sender'] as String).isNotEmpty) {
         await _handleChatEnvelope(ChatWireMessage.fromJson(data));
         return;
       }
 
       if (data['type'] != null && data['data'] != null) {
-        _handleServerEnvelope(
-          data['type'] as String,
-          data['data'],
-        );
+        _handleServerEnvelope(data['type'] as String, data['data']);
       }
     } catch (e, st) {
       debugPrint('wire parse error: $e\n$st');
@@ -202,7 +265,10 @@ class _ChatScreenState extends State<ChatScreen> {
         break;
       case 'auth_failed':
         if (payload is Map && payload['reason'] != null) {
-          _toast('[ERROR] Auth: ${payload['reason']}', d: const Duration(seconds: 12));
+          _toast(
+            '[ERROR] Auth: ${payload['reason']}',
+            d: const Duration(seconds: 12),
+          );
         }
         break;
       default:
@@ -211,7 +277,9 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _handleChatEnvelope(ChatWireMessage m) async {
-    if (m.type == WireTypes.typing || m.type == WireTypes.readReceipt) {
+    if (m.type == WireTypes.typing ||
+        m.type == WireTypes.readReceipt ||
+        m.type == WireTypes.reaction) {
       return;
     }
 
@@ -221,51 +289,36 @@ class _ChatScreenState extends State<ChatScreen> {
       try {
         if (msg.type == WireTypes.file && msg.file != null) {
           final dec = await widget.e2e!.decryptRaw(msg.file!.data);
-          msg = ChatWireMessage(
-            sender: msg.sender,
-            content: msg.content,
-            createdAt: msg.createdAt,
-            type: msg.type,
+          msg = msg.copyWith(
             encrypted: false,
-            messageId: msg.messageId,
-            recipient: msg.recipient,
-            channel: msg.channel,
-            edited: msg.edited,
             file: WireFileMeta(
               filename: msg.file!.filename,
               size: dec.length,
               data: dec,
             ),
-            reaction: msg.reaction,
           );
         } else if (msg.content.isNotEmpty) {
-          final plain = await widget.e2e!.decryptIncomingTextPayload(msg.content);
-          msg = ChatWireMessage(
-            sender: msg.sender,
-            content: plain,
-            createdAt: msg.createdAt,
-            type: msg.type,
-            encrypted: false,
-            messageId: msg.messageId,
-            recipient: msg.recipient,
-            channel: msg.channel,
-            edited: msg.edited,
-            file: msg.file,
-            reaction: msg.reaction,
+          final plain = await widget.e2e!.decryptIncomingTextPayload(
+            msg.content,
           );
+          msg = msg.copyWith(content: plain, encrypted: false);
         }
       } catch (e) {
-        msg = ChatWireMessage(
-          sender: msg.sender,
+        msg = msg.copyWith(
           content: '[ENCRYPTED - DECRYPT FAILED]',
-          createdAt: msg.createdAt,
           type: WireTypes.text,
+          encrypted: false,
+          clearFile: true,
+          clearReaction: true,
         );
       }
     }
 
     if (msg.type == WireTypes.file && msg.file != null) {
-      _receivedFiles[msg.file!.filename] = msg.file!;
+      final k = msg.messageId != 0
+          ? 'id:${msg.messageId}'
+          : 'fn:${msg.file!.filename}';
+      _receivedFiles[k] = msg.file!;
     }
 
     _maybeNotify(msg);
@@ -277,7 +330,6 @@ class _ChatScreenState extends State<ChatScreen> {
         _messages.removeAt(0);
       }
       _sending = false;
-      _ingestChannelHints(msg);
     });
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -289,16 +341,6 @@ class _ChatScreenState extends State<ChatScreen> {
         );
       }
     });
-  }
-
-  void _ingestChannelHints(ChatWireMessage m) {
-    final c = m.content;
-    if (m.sender == 'System' && c.startsWith('Joined channel #')) {
-      final name = c.substring('Joined channel #'.length).trim();
-      if (name.isNotEmpty) _activeChannel = name;
-    } else if (m.sender == 'System' && c.contains('back to #general')) {
-      _activeChannel = 'general';
-    }
   }
 
   // ── Notifications (TUI-aligned) ─────────────────────────────────────────
@@ -326,7 +368,8 @@ class _ChatScreenState extends State<ChatScreen> {
     if (m.sender == widget.config.username) return;
     if (_inQuietHours() || _inFocus()) return;
 
-    final isDm = m.type == WireTypes.dm &&
+    final isDm =
+        m.type == WireTypes.dm &&
         m.recipient.toLowerCase() == widget.config.username.toLowerCase();
     final mention = _isMention(m);
 
@@ -353,7 +396,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
     bool wantDesktop = false;
     if (_desktopEnabled &&
-        (_notifyMode == _NotifyMode.desktop || _notifyMode == _NotifyMode.both)) {
+        (_notifyMode == _NotifyMode.desktop ||
+            _notifyMode == _NotifyMode.both)) {
       if (isDm || mention) wantDesktop = true;
     }
     if (wantDesktop) {
@@ -367,29 +411,37 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _desktopNotify(String title, String body) async {
     if (!Platform.isWindows) return;
-    var msg = body.length > 100 ? '${body.substring(0, 97)}...' : body;
-    msg = msg.replaceAll("'", "''");
-    var t = title.replaceAll("'", "''");
-    final script = '''
+    final shortBody = body.length > 100 ? '${body.substring(0, 97)}...' : body;
+    final xmlStr =
+        '<toast><visual><binding template="ToastText02">'
+        '<text id="1">${_xmlEscapeForToast(title)}</text>'
+        '<text id="2">${_xmlEscapeForToast(shortBody)}</text>'
+        '</binding></visual></toast>';
+    final xb64 = base64Encode(utf8.encode(xmlStr));
+    final script =
+        '''
 [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
 [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null
-\$template = @"
-<toast><visual><binding template="ToastText02"><text id="1">$t</text><text id="2">$msg</text></binding></visual></toast>
-"@
+\$xb64 = '$xb64'
+\$xtxt = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String(\$xb64))
 \$xml = New-Object Windows.Data.Xml.Dom.XmlDocument
-\$xml.LoadXml(\$template)
+\$xml.LoadXml(\$xtxt)
 \$toast = New-Object Windows.UI.Notifications.ToastNotification \$xml
 [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("marchat").Show(\$toast)
 ''';
     try {
-      await Process.run('powershell', ['-NoProfile', '-Command', script]);
+      await Process.run('powershell', [
+        '-NoProfile',
+        '-EncodedCommand',
+        _powershellEncodedCommand(script),
+      ]);
     } catch (_) {}
   }
 
   // ── Send ────────────────────────────────────────────────────────────────
 
   Future<void> _sendJson(Map<String, dynamic> m) async {
-    if (!_connected || _ch == null) {
+    if (_ch == null) {
       _toast('[ERROR] Not connected');
       return;
     }
@@ -431,6 +483,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (text == ':time') {
       setState(() => _twentyFourHour = !_twentyFourHour);
       widget.config.twentyFourHour = _twentyFourHour;
+      unawaited(_persistChatDisplayPrefs());
       _toast('[OK] Time format: ${_twentyFourHour ? "24h" : "12h"}');
       return true;
     }
@@ -499,18 +552,15 @@ class _ChatScreenState extends State<ChatScreen> {
       if (parts.length >= 3) {
         final a = int.tryParse(parts[1]);
         final b = int.tryParse(parts[2]);
-        if (a != null &&
-            b != null &&
-            a >= 0 &&
-            a <= 23 &&
-            b >= 0 &&
-            b <= 23) {
+        if (a != null && b != null && a >= 0 && a <= 23 && b >= 0 && b <= 23) {
           setState(() {
             _quietOn = true;
             _quietStart = a;
             _quietEnd = b;
           });
-          _toast('[OK] Quiet hours ${a.toString().padLeft(2, '0')}:00 – ${b.toString().padLeft(2, '0')}:00');
+          _toast(
+            '[OK] Quiet hours ${a.toString().padLeft(2, '0')}:00 – ${b.toString().padLeft(2, '0')}:00',
+          );
           return true;
         }
       }
@@ -566,6 +616,7 @@ class _ChatScreenState extends State<ChatScreen> {
         _themeIndex = kMcBuiltinChatThemes.indexWhere((e) => e.id == def.id);
         widget.config.chatThemeId = def.id;
       });
+      unawaited(_persistChatDisplayPrefs());
       _toast('[OK] Theme → ${def.name}');
       return true;
     }
@@ -589,23 +640,27 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     if (text == ':channels') {
-      await _sendWire(ChatWireMessage(
-        sender: widget.config.username,
-        content: '',
-        createdAt: DateTime.now(),
-        type: WireTypes.listChannels,
-      ));
+      await _sendWire(
+        ChatWireMessage(
+          sender: widget.config.username,
+          content: '',
+          createdAt: DateTime.now(),
+          type: WireTypes.listChannels,
+        ),
+      );
       return true;
     }
 
     if (text == ':leave') {
       setState(() => _activeChannel = 'general');
-      await _sendWire(ChatWireMessage(
-        sender: widget.config.username,
-        content: '',
-        createdAt: DateTime.now(),
-        type: WireTypes.leaveChannel,
-      ));
+      await _sendWire(
+        ChatWireMessage(
+          sender: widget.config.username,
+          content: '',
+          createdAt: DateTime.now(),
+          type: WireTypes.leaveChannel,
+        ),
+      );
       return true;
     }
 
@@ -616,13 +671,15 @@ class _ChatScreenState extends State<ChatScreen> {
         return true;
       }
       setState(() => _activeChannel = ch);
-      await _sendWire(ChatWireMessage(
-        sender: widget.config.username,
-        content: '',
-        createdAt: DateTime.now(),
-        type: WireTypes.joinChannel,
-        channel: ch,
-      ));
+      await _sendWire(
+        ChatWireMessage(
+          sender: widget.config.username,
+          content: '',
+          createdAt: DateTime.now(),
+          type: WireTypes.joinChannel,
+          channel: ch,
+        ),
+      );
       return true;
     }
 
@@ -632,12 +689,14 @@ class _ChatScreenState extends State<ChatScreen> {
         _toast('[INFO] :search <query>');
         return true;
       }
-      await _sendWire(ChatWireMessage(
-        sender: widget.config.username,
-        content: q,
-        createdAt: DateTime.now(),
-        type: WireTypes.search,
-      ));
+      await _sendWire(
+        ChatWireMessage(
+          sender: widget.config.username,
+          content: q,
+          createdAt: DateTime.now(),
+          type: WireTypes.search,
+        ),
+      );
       return true;
     }
 
@@ -650,21 +709,25 @@ class _ChatScreenState extends State<ChatScreen> {
       }
       if (parts.length == 2) {
         final u = parts[1];
-        setState(() {
-          _dmRecipient = _dmRecipient == u ? null : u;
-        });
-        _toast(_dmRecipient == null ? '[OK] DM mode off' : '[OK] DM → $_dmRecipient');
+        if (_dmRecipient == u) {
+          _toast('[OK] DM already: $u');
+          return true;
+        }
+        setState(() => _dmRecipient = u);
+        _toast('[OK] DM → $_dmRecipient');
         return true;
       }
       final target = parts[1];
       final body = parts.sublist(2).join(' ');
-      await _sendWire(ChatWireMessage(
-        sender: widget.config.username,
-        content: body,
-        createdAt: DateTime.now(),
-        type: WireTypes.dm,
-        recipient: target,
-      ));
+      await _sendWire(
+        ChatWireMessage(
+          sender: widget.config.username,
+          content: body,
+          createdAt: DateTime.now(),
+          type: WireTypes.dm,
+          recipient: target,
+        ),
+      );
       return true;
     }
 
@@ -684,7 +747,10 @@ class _ChatScreenState extends State<ChatScreen> {
       var enc = false;
       if (widget.e2e != null) {
         try {
-          final w = await widget.e2e!.encryptOutgoingText(widget.config.username, newText);
+          final w = await widget.e2e!.encryptOutgoingText(
+            widget.config.username,
+            newText,
+          );
           content = w.content;
           enc = true;
         } catch (e) {
@@ -814,18 +880,26 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
 
-    if (!_connected || _ch == null) {
+    if (_ch == null) {
       _toast('[ERROR] Not connected');
       return;
     }
 
     if (text.startsWith(':')) {
-      await _sendWire(ChatWireMessage(
-        sender: widget.config.username,
-        content: text,
-        createdAt: DateTime.now(),
-        type: WireTypes.adminCommand,
-      ));
+      if (widget.isAdmin) {
+        await _sendWire(
+          ChatWireMessage(
+            sender: widget.config.username,
+            content: text,
+            createdAt: DateTime.now(),
+            type: WireTypes.adminCommand,
+          ),
+        );
+      } else {
+        await _sendWire(
+          ChatWireMessage.plainText(widget.config.username, text),
+        );
+      }
       _input.clear();
       _inputFocus.requestFocus();
       return;
@@ -835,13 +909,15 @@ class _ChatScreenState extends State<ChatScreen> {
 
     try {
       if (_dmRecipient != null) {
-        await _sendWire(ChatWireMessage(
-          sender: widget.config.username,
-          content: text,
-          createdAt: DateTime.now(),
-          type: WireTypes.dm,
-          recipient: _dmRecipient!,
-        ));
+        await _sendWire(
+          ChatWireMessage(
+            sender: widget.config.username,
+            content: text,
+            createdAt: DateTime.now(),
+            type: WireTypes.dm,
+            recipient: _dmRecipient!,
+          ),
+        );
       } else if (widget.e2e != null) {
         final enc = await widget.e2e!.encryptOutgoingText(
           widget.config.username,
@@ -849,10 +925,9 @@ class _ChatScreenState extends State<ChatScreen> {
         );
         await _sendWire(enc);
       } else {
-        await _sendWire(ChatWireMessage.plainText(
-          widget.config.username,
-          text,
-        ));
+        await _sendWire(
+          ChatWireMessage.plainText(widget.config.username, text),
+        );
       }
     } catch (e) {
       _toast('[ERROR] Send failed: $e');
@@ -864,7 +939,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _sendFile(String? pathOrNull) async {
-    if (!_connected || _ch == null) {
+    if (_ch == null) {
       _toast('[ERROR] Not connected');
       return;
     }
@@ -893,29 +968,42 @@ class _ChatScreenState extends State<ChatScreen> {
         wireBytes = await widget.e2e!.encryptRaw(bytes);
         encFile = true;
       }
-      await _sendWire(ChatWireMessage(
-        sender: widget.config.username,
-        content: '',
-        createdAt: DateTime.now(),
-        type: WireTypes.file,
-        encrypted: encFile,
-        file: WireFileMeta(filename: name, size: wireBytes.length, data: wireBytes),
-      ));
+      await _sendWire(
+        ChatWireMessage(
+          sender: widget.config.username,
+          content: '',
+          createdAt: DateTime.now(),
+          type: WireTypes.file,
+          encrypted: encFile,
+          file: WireFileMeta(
+            filename: name,
+            size: wireBytes.length,
+            data: wireBytes,
+          ),
+        ),
+      );
       _toast('[OK] Sent file $name');
     } catch (e) {
       _toast('[ERROR] File send: $e');
     }
   }
 
-  Future<void> _saveFile(String filename) async {
-    final f = _receivedFiles[filename];
+  Future<void> _saveFile(String arg) async {
+    final s = arg.trim();
+    WireFileMeta? f;
+    if (s.startsWith('id:')) {
+      final id = int.tryParse(s.substring(3));
+      if (id != null) f = _receivedFiles['id:$id'];
+    } else {
+      f = _receivedFiles['fn:$s'] ?? _receivedFiles[s];
+    }
     if (f == null) {
-      _toast('[ERROR] No file "$filename" in session cache');
+      _toast('[ERROR] No file "$s" in session cache');
       return;
     }
     final path = await FilePicker.platform.saveFile(
       dialogTitle: 'Save file',
-      fileName: filename,
+      fileName: f.filename,
     );
     if (path == null) return;
     try {
@@ -959,12 +1047,14 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
           FilledButton(
             onPressed: () {
               if (code.text.isNotEmpty) {
-                final block =
-                    '```${lang.text.trim()}\n${code.text}\n```';
+                final block = '```${lang.text.trim()}\n${code.text}\n```';
                 Navigator.pop(ctx);
                 _submitInput(block);
               }
@@ -981,6 +1071,7 @@ class _ChatScreenState extends State<ChatScreen> {
       _themeIndex = (_themeIndex + 1) % kMcBuiltinChatThemes.length;
       widget.config.chatThemeId = kMcBuiltinChatThemes[_themeIndex].id;
     });
+    unawaited(_persistChatDisplayPrefs());
     _toast('[OK] Theme → ${t.name}');
   }
 
@@ -996,7 +1087,9 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Widget _header() {
-    final title = _dmRecipient != null ? 'DM: $_dmRecipient' : '#$_activeChannel';
+    final title = _dmRecipient != null
+        ? 'DM: $_dmRecipient'
+        : '#$_activeChannel';
     return Container(
       height: 42,
       color: t.headerBg,
@@ -1005,7 +1098,8 @@ class _ChatScreenState extends State<ChatScreen> {
         children: [
           IconButton(
             tooltip: 'Channels',
-            onPressed: () => setState(() => _showChannelsPanel = !_showChannelsPanel),
+            onPressed: () =>
+                setState(() => _showChannelsPanel = !_showChannelsPanel),
             icon: Icon(Icons.menu, color: t.headerFg, size: 20),
           ),
           Text(
@@ -1019,7 +1113,10 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 6),
-            child: Text('›', style: TextStyle(color: t.headerFg.withValues(alpha: 0.5))),
+            child: Text(
+              '›',
+              style: TextStyle(color: t.headerFg.withValues(alpha: 0.5)),
+            ),
           ),
           Expanded(
             child: Text(
@@ -1035,7 +1132,14 @@ class _ChatScreenState extends State<ChatScreen> {
           if (_inFocus()) ...[
             Icon(Icons.do_not_disturb_on_outlined, color: t.bannerFg, size: 16),
             const SizedBox(width: 4),
-            Text('focus', style: TextStyle(color: t.bannerFg, fontFamily: 'monospace', fontSize: 11)),
+            Text(
+              'focus',
+              style: TextStyle(
+                color: t.bannerFg,
+                fontFamily: 'monospace',
+                fontSize: 11,
+              ),
+            ),
             const SizedBox(width: 8),
           ],
           IconButton(
@@ -1086,17 +1190,29 @@ class _ChatScreenState extends State<ChatScreen> {
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
         child: Row(
           children: [
-            Icon(err ? Icons.error_outline : Icons.info_outline, size: 14, color: fg),
+            Icon(
+              err ? Icons.error_outline : Icons.info_outline,
+              size: 14,
+              color: fg,
+            ),
             const SizedBox(width: 8),
             Expanded(
               child: Text(
                 _banner,
-                style: TextStyle(color: fg, fontFamily: 'monospace', fontSize: 12),
+                style: TextStyle(
+                  color: fg,
+                  fontFamily: 'monospace',
+                  fontSize: 12,
+                ),
               ),
             ),
             InkWell(
               onTap: () => setState(() => _banner = ''),
-              child: Icon(Icons.close, size: 14, color: fg.withValues(alpha: 0.7)),
+              child: Icon(
+                Icons.close,
+                size: 14,
+                color: fg.withValues(alpha: 0.7),
+              ),
             ),
           ],
         ),
@@ -1134,18 +1250,34 @@ class _ChatScreenState extends State<ChatScreen> {
             dense: true,
             title: Text(
               _dmRecipient ?? '(off)',
-              style: TextStyle(color: t.msgFg, fontFamily: 'monospace', fontSize: 12),
+              style: TextStyle(
+                color: t.msgFg,
+                fontFamily: 'monospace',
+                fontSize: 12,
+              ),
             ),
-            subtitle: Text(':dm user | :dm', style: TextStyle(color: t.timeFg, fontSize: 10)),
+            subtitle: Text(
+              ':dm user | :dm',
+              style: TextStyle(color: t.timeFg, fontSize: 10),
+            ),
           ),
           const Spacer(),
           if (widget.isAdmin)
             ListTile(
               dense: true,
               leading: Icon(Icons.storage, color: t.accentFg, size: 18),
-              title: Text(':cleardb / :backup / :stats',
-                  style: TextStyle(color: t.accentFg, fontFamily: 'monospace', fontSize: 11)),
-              subtitle: Text('Also :list :store …', style: TextStyle(color: t.timeFg, fontSize: 10)),
+              title: Text(
+                ':cleardb / :backup / :stats',
+                style: TextStyle(
+                  color: t.accentFg,
+                  fontFamily: 'monospace',
+                  fontSize: 11,
+                ),
+              ),
+              subtitle: Text(
+                'Also :list :store …',
+                style: TextStyle(color: t.timeFg, fontSize: 10),
+              ),
             ),
         ],
       ),
@@ -1153,18 +1285,18 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Widget _panelSection(String label) => Padding(
-        padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
-        child: Text(
-          label,
-          style: TextStyle(
-            color: t.timeFg,
-            fontSize: 9,
-            fontFamily: 'monospace',
-            letterSpacing: 1.1,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-      );
+    padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
+    child: Text(
+      label,
+      style: TextStyle(
+        color: t.timeFg,
+        fontSize: 9,
+        fontFamily: 'monospace',
+        letterSpacing: 1.1,
+        fontWeight: FontWeight.bold,
+      ),
+    ),
+  );
 
   Widget _userPanel() {
     return Container(
@@ -1193,7 +1325,9 @@ class _ChatScreenState extends State<ChatScreen> {
                 final isMe = u == widget.config.username;
                 final sel = widget.isAdmin && _selectedUserIndex == i;
                 return Material(
-                  color: sel ? t.borderColor.withValues(alpha: 0.15) : Colors.transparent,
+                  color: sel
+                      ? t.borderColor.withValues(alpha: 0.15)
+                      : Colors.transparent,
                   child: ListTile(
                     dense: true,
                     title: Text(
@@ -1207,14 +1341,14 @@ class _ChatScreenState extends State<ChatScreen> {
                     ),
                     onTap: widget.isAdmin && !isMe
                         ? () => setState(() {
-                              if (_selectedUserIndex == i) {
-                                _selectedUserIndex = -1;
-                                _selectedUser = '';
-                              } else {
-                                _selectedUserIndex = i;
-                                _selectedUser = u;
-                              }
-                            })
+                            if (_selectedUserIndex == i) {
+                              _selectedUserIndex = -1;
+                              _selectedUser = '';
+                            } else {
+                              _selectedUserIndex = i;
+                              _selectedUser = u;
+                            }
+                          })
                         : null,
                   ),
                 );
@@ -1240,14 +1374,17 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Widget _miniAct(String label, VoidCallback onTap) => OutlinedButton(
-        style: OutlinedButton.styleFrom(
-          foregroundColor: t.accentFg,
-          side: BorderSide(color: t.borderColor.withValues(alpha: 0.5)),
-          visualDensity: VisualDensity.compact,
-        ),
-        onPressed: onTap,
-        child: Text(label, style: const TextStyle(fontFamily: 'monospace', fontSize: 11)),
-      );
+    style: OutlinedButton.styleFrom(
+      foregroundColor: t.accentFg,
+      side: BorderSide(color: t.borderColor.withValues(alpha: 0.5)),
+      visualDensity: VisualDensity.compact,
+    ),
+    onPressed: onTap,
+    child: Text(
+      label,
+      style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
+    ),
+  );
 
   Future<void> _adminUserCmd(String verb) async {
     if (_selectedUser.isEmpty) return;
@@ -1255,12 +1392,14 @@ class _ChatScreenState extends State<ChatScreen> {
       _toast('[ERROR] Cannot target self');
       return;
     }
-    await _sendWire(ChatWireMessage(
-      sender: widget.config.username,
-      content: ':$verb $_selectedUser',
-      createdAt: DateTime.now(),
-      type: WireTypes.adminCommand,
-    ));
+    await _sendWire(
+      ChatWireMessage(
+        sender: widget.config.username,
+        content: ':$verb $_selectedUser',
+        createdAt: DateTime.now(),
+        type: WireTypes.adminCommand,
+      ),
+    );
     if (verb == 'kick' || verb == 'ban' || verb == 'forcedisconnect') {
       setState(() {
         _selectedUserIndex = -1;
@@ -1274,6 +1413,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final me = m.sender == widget.config.username;
     final ts = _fmtClock(m.createdAt);
     if (m.type == WireTypes.file && m.file != null) {
+      final saveArg = m.messageId != 0 ? 'id:${m.messageId}' : m.file!.filename;
       return Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
         child: Row(
@@ -1281,7 +1421,14 @@ class _ChatScreenState extends State<ChatScreen> {
           children: [
             SizedBox(
               width: 44,
-              child: Text(ts, style: TextStyle(color: t.timeFg, fontFamily: 'monospace', fontSize: 11)),
+              child: Text(
+                ts,
+                style: TextStyle(
+                  color: t.timeFg,
+                  fontFamily: 'monospace',
+                  fontSize: 11,
+                ),
+              ),
             ),
             SizedBox(
               width: 92,
@@ -1298,8 +1445,12 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
             Expanded(
               child: Text(
-                '📎 ${m.file!.filename} (${m.file!.size} bytes) — :savefile ${m.file!.filename}',
-                style: TextStyle(color: t.msgFg, fontFamily: 'monospace', fontSize: 12),
+                '[file] ${m.file!.filename} (${m.file!.size} bytes) — :savefile $saveArg',
+                style: TextStyle(
+                  color: t.msgFg,
+                  fontFamily: 'monospace',
+                  fontSize: 12,
+                ),
               ),
             ),
           ],
@@ -1314,7 +1465,14 @@ class _ChatScreenState extends State<ChatScreen> {
         children: [
           SizedBox(
             width: 44,
-            child: Text(ts, style: TextStyle(color: t.timeFg, fontFamily: 'monospace', fontSize: 11)),
+            child: Text(
+              ts,
+              style: TextStyle(
+                color: t.timeFg,
+                fontFamily: 'monospace',
+                fontSize: 11,
+              ),
+            ),
           ),
           SizedBox(
             width: 92,
@@ -1335,7 +1493,11 @@ class _ChatScreenState extends State<ChatScreen> {
               padding: const EdgeInsets.only(left: 6),
               child: Text(
                 '#${m.messageId}${m.encrypted ? " E" : ""}',
-                style: TextStyle(color: t.timeFg, fontSize: 10, fontFamily: 'monospace'),
+                style: TextStyle(
+                  color: t.timeFg,
+                  fontSize: 10,
+                  fontFamily: 'monospace',
+                ),
               ),
             ),
         ],
@@ -1350,10 +1512,12 @@ class _ChatScreenState extends State<ChatScreen> {
       if (m.start > last) {
         spans.add(TextSpan(text: content.substring(last, m.start)));
       }
-      spans.add(TextSpan(
-        text: m.group(0),
-        style: TextStyle(color: t.mentionFg, fontWeight: FontWeight.bold),
-      ));
+      spans.add(
+        TextSpan(
+          text: m.group(0),
+          style: TextStyle(color: t.mentionFg, fontWeight: FontWeight.bold),
+        ),
+      );
       last = m.end;
     }
     if (last < content.length) {
@@ -1365,34 +1529,14 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  String _helpBody() {
-    final sb = StringBuffer()
-      ..writeln('Session: ${widget.e2e != null ? "E2E (global key)" : "Plain text"}')
-      ..writeln('Shortcuts: Ctrl+H help · Ctrl+T theme · Enter send')
-      ..writeln()
-      ..writeln(':sendfile [path]  :savefile <name>  :code')
-      ..writeln(':theme <id>  :themes  :time  :msginfo  :clear  :export [file]')
-      ..writeln(':bell  :bell-mention  :notify-mode …  :notify-desktop  :notify-status')
-      ..writeln(':quiet h h  :quiet-off  :focus [dur]  :focus-off')
-      ..writeln(':dm [user [msg]]  :join  :leave  :channels')
-      ..writeln(':edit :delete :search :react :pin :pinned')
-      ..writeln(':q quit');
-    if (widget.isAdmin) {
-      sb
-        ..writeln()
-        ..writeln('Admin: :kick :ban :unban :allow :forcedisconnect')
-        ..writeln(':cleardb :backup :stats  plugin :list :store …');
-    }
-    return sb.toString();
-  }
-
   @override
   Widget build(BuildContext context) {
     return CallbackShortcuts(
       bindings: {
         const SingleActivator(LogicalKeyboardKey.keyH, control: true): () =>
             setState(() => _showHelp = !_showHelp),
-        const SingleActivator(LogicalKeyboardKey.keyT, control: true): _cycleTheme,
+        const SingleActivator(LogicalKeyboardKey.keyT, control: true):
+            _cycleTheme,
       },
       child: Focus(
         autofocus: true,
@@ -1406,11 +1550,18 @@ class _ChatScreenState extends State<ChatScreen> {
                   _bannerBar(),
                   Container(
                     width: double.infinity,
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 4,
+                    ),
                     color: t.sidebarBg,
                     child: Text(
                       _statusLine,
-                      style: TextStyle(color: t.otherFg, fontFamily: 'monospace', fontSize: 11),
+                      style: TextStyle(
+                        color: t.otherFg,
+                        fontFamily: 'monospace',
+                        fontSize: 11,
+                      ),
                     ),
                   ),
                   Expanded(
@@ -1434,14 +1585,20 @@ class _ChatScreenState extends State<ChatScreen> {
                                 ? Center(
                                     child: Text(
                                       'No messages yet.',
-                                      style: TextStyle(color: t.timeFg, fontFamily: 'monospace'),
+                                      style: TextStyle(
+                                        color: t.timeFg,
+                                        fontFamily: 'monospace',
+                                      ),
                                     ),
                                   )
                                 : ListView.builder(
                                     controller: _scroll,
-                                    padding: const EdgeInsets.symmetric(vertical: 8),
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 8,
+                                    ),
                                     itemCount: _messages.length,
-                                    itemBuilder: (_, i) => _messageLine(_messages[i]),
+                                    itemBuilder: (_, i) =>
+                                        _messageLine(_messages[i]),
                                   ),
                           ),
                         ),
@@ -1475,7 +1632,11 @@ class _ChatScreenState extends State<ChatScreen> {
               color: t.borderColor.withValues(alpha: 0.2),
               child: Text(
                 _dmRecipient != null ? '@$_dmRecipient' : '#$_activeChannel',
-                style: TextStyle(color: t.accentFg, fontFamily: 'monospace', fontSize: 12),
+                style: TextStyle(
+                  color: t.accentFg,
+                  fontFamily: 'monospace',
+                  fontSize: 12,
+                ),
               ),
             ),
             const SizedBox(width: 6),
@@ -1483,7 +1644,11 @@ class _ChatScreenState extends State<ChatScreen> {
               child: TextField(
                 controller: _input,
                 focusNode: _inputFocus,
-                style: TextStyle(color: t.inputFg, fontFamily: 'monospace', fontSize: 13),
+                style: TextStyle(
+                  color: t.inputFg,
+                  fontFamily: 'monospace',
+                  fontSize: 13,
+                ),
                 cursorColor: t.accentFg,
                 minLines: 1,
                 maxLines: 4,
@@ -1491,15 +1656,26 @@ class _ChatScreenState extends State<ChatScreen> {
                   filled: true,
                   fillColor: t.inputBg,
                   hintText: hint,
-                  hintStyle: TextStyle(color: t.timeFg, fontFamily: 'monospace', fontSize: 12),
+                  hintStyle: TextStyle(
+                    color: t.timeFg,
+                    fontFamily: 'monospace',
+                    fontSize: 12,
+                  ),
                   border: OutlineInputBorder(
-                    borderSide: BorderSide(color: t.borderColor.withValues(alpha: 0.35)),
+                    borderSide: BorderSide(
+                      color: t.borderColor.withValues(alpha: 0.35),
+                    ),
                   ),
                   focusedBorder: OutlineInputBorder(
-                    borderSide: BorderSide(color: t.borderColor.withValues(alpha: 0.65)),
+                    borderSide: BorderSide(
+                      color: t.borderColor.withValues(alpha: 0.65),
+                    ),
                   ),
                   isDense: true,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 10,
+                  ),
                 ),
                 onSubmitted: (_) => _submitInput(),
               ),
@@ -1529,14 +1705,20 @@ class _ChatScreenState extends State<ChatScreen> {
             child: GestureDetector(
               onTap: () {},
               child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 520, maxHeight: 520),
+                constraints: const BoxConstraints(
+                  maxWidth: 520,
+                  maxHeight: 520,
+                ),
                 child: Material(
                   color: t.bg,
                   child: Column(
                     children: [
                       Container(
                         width: double.infinity,
-                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 10,
+                        ),
                         color: t.headerBg,
                         child: Row(
                           children: [
@@ -1550,8 +1732,13 @@ class _ChatScreenState extends State<ChatScreen> {
                             ),
                             const Spacer(),
                             IconButton(
-                              onPressed: () => setState(() => _showHelp = false),
-                              icon: Icon(Icons.close, color: t.headerFg, size: 20),
+                              onPressed: () =>
+                                  setState(() => _showHelp = false),
+                              icon: Icon(
+                                Icons.close,
+                                color: t.headerFg,
+                                size: 20,
+                              ),
                             ),
                           ],
                         ),
@@ -1560,8 +1747,13 @@ class _ChatScreenState extends State<ChatScreen> {
                         child: SingleChildScrollView(
                           padding: const EdgeInsets.all(16),
                           child: SelectableText(
-                            _helpBody(),
-                            style: TextStyle(color: t.msgFg, fontFamily: 'monospace', fontSize: 12, height: 1.35),
+                            _helpBodyText,
+                            style: TextStyle(
+                              color: t.msgFg,
+                              fontFamily: 'monospace',
+                              fontSize: 12,
+                              height: 1.35,
+                            ),
                           ),
                         ),
                       ),
