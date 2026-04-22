@@ -187,6 +187,8 @@ class _ChatScreenState extends State<ChatScreen> {
       uri = uri.replace(queryParameters: qp);
 
       _ch = WebSocketChannel.connect(uri);
+      // Header "live" dot uses _connected, which is set only after first inbound
+      // JSON in _onSocketData (not here when _ch is assigned).
 
       final hs = <String, dynamic>{
         'username': widget.config.username,
@@ -218,7 +220,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (!mounted) return;
     setState(() {
       _connected = false;
-      _statusLine = 'Disconnected ($reason) — retrying…';
+      _statusLine = 'Disconnected ($reason); retrying…';
     });
     _reconnectTimer?.cancel();
     _reconnectTimer = Timer(_reconnectDelay, _connect);
@@ -559,7 +561,7 @@ class _ChatScreenState extends State<ChatScreen> {
             _quietEnd = b;
           });
           _toast(
-            '[OK] Quiet hours ${a.toString().padLeft(2, '0')}:00 – ${b.toString().padLeft(2, '0')}:00',
+            '[OK] Quiet hours ${a.toString().padLeft(2, '0')}:00-${b.toString().padLeft(2, '0')}:00',
           );
           return true;
         }
@@ -609,7 +611,7 @@ class _ChatScreenState extends State<ChatScreen> {
       final name = text.substring(7).trim().toLowerCase();
       final def = mcThemeById(name);
       if (def == null) {
-        _toast('[ERROR] Unknown theme "$name" — use :themes');
+        _toast('[ERROR] Unknown theme "$name", use :themes');
         return true;
       }
       setState(() {
@@ -895,13 +897,11 @@ class _ChatScreenState extends State<ChatScreen> {
             type: WireTypes.adminCommand,
           ),
         );
+        _input.clear();
+        _inputFocus.requestFocus();
       } else {
-        await _sendWire(
-          ChatWireMessage.plainText(widget.config.username, text),
-        );
+        _toast('[ERROR] Unknown command');
       }
-      _input.clear();
-      _inputFocus.requestFocus();
       return;
     }
 
@@ -1445,7 +1445,7 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
             Expanded(
               child: Text(
-                '[file] ${m.file!.filename} (${m.file!.size} bytes) — :savefile $saveArg',
+                '[file] ${m.file!.filename} (${m.file!.size} bytes); :savefile $saveArg',
                 style: TextStyle(
                   color: t.msgFg,
                   fontFamily: 'monospace',
@@ -1619,7 +1619,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Widget _inputBar() {
     final hint = _dmRecipient != null
-        ? 'DM to $_dmRecipient — :dm to exit'
+        ? 'DM to $_dmRecipient; :dm to exit'
         : 'Message or command (:help in server / Ctrl+H here)';
     return Material(
       color: t.sidebarBg,

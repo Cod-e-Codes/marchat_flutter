@@ -24,7 +24,7 @@ void main() {
     await tester.pumpWidget(const MarchatApp());
 
     // Verify that the configuration screen loads
-    expect(find.text('marchat — connect'), findsOneWidget);
+    expect(find.text('marchat: connect'), findsOneWidget);
     expect(find.text('Username'), findsOneWidget);
     expect(find.text('Server URL'), findsOneWidget);
     expect(find.text('Connect'), findsOneWidget);

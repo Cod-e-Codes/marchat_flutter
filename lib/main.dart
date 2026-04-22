@@ -245,7 +245,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('marchat — connect'), centerTitle: true),
+      appBar: AppBar(title: const Text('marchat: connect'), centerTitle: true),
       body: AbsorbPointer(
         absorbing: _busy,
         child: Padding(
@@ -346,7 +346,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
                     controller: _globalKeyField,
                     decoration: const InputDecoration(
                       labelText:
-                          'Global E2E key (base64, 32 bytes) — optional if env / keystore',
+                          'Global E2E key (base64, 32 bytes), optional if env / keystore',
                       border: OutlineInputBorder(),
                     ),
                     obscureText: true,

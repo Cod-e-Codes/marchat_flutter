@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 /// Terminal-style chat chrome colors (aligned with TUI built-ins: system, patriot,
-/// retro, modern — same names and `:themes` / Ctrl+T order as marchat TUI).
+/// retro, modern; same names and `:themes` / Ctrl+T order as marchat TUI).
 Color mcHex(String h) =>
     Color(int.parse('FF${h.replaceFirst('#', '')}', radix: 16));
 
