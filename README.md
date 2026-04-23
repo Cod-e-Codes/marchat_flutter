@@ -7,6 +7,7 @@ Flutter desktop and multi-platform client for [marchat](https://github.com/Cod-e
 ## Features
 
 - Real-time messaging over WebSocket (string message types, admin commands, channels, DMs, structured commands aligned with the TUI)
+- Reactions (`type: reaction` with `reaction.target_id` / `emoji` / `is_removal`) update the transcript in place and render under the target message like the Go TUI
 - Optional global E2E: ChaCha20-Poly1305 on the wire, compatible with `shared.EncryptTextMessage` / `MARCHAT_GLOBAL_E2E_KEY`
 - Unlock existing `keystore.dat` with the same passphrase and format as `client/crypto/keystore.go` (v3 portable header or legacy path-salt)
 - File send and save

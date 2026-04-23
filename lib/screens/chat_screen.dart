@@ -12,6 +12,7 @@ import '../app_config.dart';
 import '../chat_themes.dart';
 import '../mc_crypto.dart';
 import '../reaction_aliases.dart';
+import '../reaction_state.dart';
 import '../wire_message.dart';
 
 const int _kMaxTranscriptMessages = 2000;
@@ -90,6 +91,9 @@ class _ChatScreenState extends State<ChatScreen> {
   final List<ChatWireMessage> _messages = [];
   List<String> _users = [];
   final Map<String, WireFileMeta> _receivedFiles = {};
+
+  /// Target [ChatWireMessage.messageId] -> emoji -> reactors (marchat TUI parity).
+  final Map<int, Map<String, Set<String>>> _reactionsByTarget = {};
 
   String _banner = '';
   Timer? _bannerTimer;
@@ -324,9 +328,20 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _handleChatEnvelope(ChatWireMessage m) async {
-    if (m.type == WireTypes.typing ||
-        m.type == WireTypes.readReceipt ||
-        m.type == WireTypes.reaction) {
+    if (m.type == WireTypes.typing || m.type == WireTypes.readReceipt) {
+      return;
+    }
+
+    if (m.type == WireTypes.reaction) {
+      if (!mounted) return;
+      setState(() {
+        applyMarchatReactionUpdate(
+          byTarget: _reactionsByTarget,
+          sender: m.sender,
+          reaction: m.reaction,
+        );
+        _sending = false;
+      });
       return;
     }
 
@@ -405,7 +420,10 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() {
       _messages.add(msg);
       if (_messages.length > _kMaxTranscriptMessages) {
-        _messages.removeAt(0);
+        final dropped = _messages.removeAt(0);
+        if (dropped.messageId != 0) {
+          _reactionsByTarget.remove(dropped.messageId);
+        }
       }
       _sending = false;
     });
@@ -558,7 +576,10 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     if (text == ':clear') {
-      setState(() => _messages.clear());
+      setState(() {
+        _messages.clear();
+        _reactionsByTarget.clear();
+      });
       _toast('[OK] Chat cleared');
       return true;
     }
@@ -1527,13 +1548,19 @@ class _ChatScreenState extends State<ChatScreen> {
               ),
             ),
             Expanded(
-              child: Text(
-                '[file] ${m.file!.filename} (${m.file!.size} bytes); :savefile $saveArg',
-                style: TextStyle(
-                  color: t.msgFg,
-                  fontFamily: 'monospace',
-                  fontSize: 12,
-                ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '[file] ${m.file!.filename} (${m.file!.size} bytes); :savefile $saveArg',
+                    style: TextStyle(
+                      color: t.msgFg,
+                      fontFamily: 'monospace',
+                      fontSize: 12,
+                    ),
+                  ),
+                  ..._reactionTrail(m.messageId),
+                ],
               ),
             ),
           ],
@@ -1571,8 +1598,11 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           ),
           Expanded(
-            child: m.type == WireTypes.delete
-                ? Text(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (m.type == WireTypes.delete)
+                  Text(
                     '[deleted]',
                     style: TextStyle(
                       color: t.timeFg,
@@ -1581,8 +1611,8 @@ class _ChatScreenState extends State<ChatScreen> {
                       fontStyle: FontStyle.italic,
                     ),
                   )
-                : m.edited
-                ? Row(
+                else if (m.edited)
+                  Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
@@ -1596,7 +1626,11 @@ class _ChatScreenState extends State<ChatScreen> {
                       Expanded(child: _richMessage(m.content)),
                     ],
                   )
-                : _richMessage(m.content),
+                else
+                  _richMessage(m.content),
+                ..._reactionTrail(m.messageId),
+              ],
+            ),
           ),
           if (_showMsgMeta && m.messageId != 0)
             Padding(
@@ -1613,6 +1647,25 @@ class _ChatScreenState extends State<ChatScreen> {
         ],
       ),
     );
+  }
+
+  List<Widget> _reactionTrail(int messageId) {
+    if (messageId == 0) return const [];
+    final line = formatReactionSummary(_reactionsByTarget, messageId);
+    if (line == null) return const [];
+    return [
+      Padding(
+        padding: const EdgeInsets.only(top: 2),
+        child: Text(
+          line,
+          style: TextStyle(
+            color: t.timeFg,
+            fontFamily: 'monospace',
+            fontSize: 11,
+          ),
+        ),
+      ),
+    ];
   }
 
   Widget _richMessage(String content) {
