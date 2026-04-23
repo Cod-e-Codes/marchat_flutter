@@ -21,6 +21,16 @@ Flutter desktop and multi-platform client for [marchat](https://github.com/Cod-e
 - Git for Windows (or Git on your PATH) if you clone with Git
 - **Windows desktop builds:** plugin builds need symlink support. Turn on **Developer Mode** in Windows Settings (Privacy and security, For developers), or run the build from an elevated shell. See Flutter Windows setup docs if `flutter build windows` fails with a symlink message.
 
+## Branding
+
+The same logo files as the [marchat](https://github.com/Cod-e-Codes/marchat) repo live under `assets/branding/` (`marchat-transparent.png` and `.svg`). The **in-app** UI is text only (no repeated logos). The PNG is used to generate **taskbar, window, and PWA/ favicon** icons. After changing the artwork, refresh those:
+
+```bash
+dart run flutter_launcher_icons
+```
+
+That overwrites platform launcher and `web/icons` from `assets/branding/marchat-transparent.png` (and updates web favicon when the tool does so).
+
 ## Setup
 
 ```

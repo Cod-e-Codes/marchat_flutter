@@ -246,7 +246,10 @@ class _ConfigScreenState extends State<ConfigScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('marchat: connect'), centerTitle: true),
+      appBar: AppBar(
+        title: const Text('marchat: connect'),
+        centerTitle: true,
+      ),
       body: AbsorbPointer(
         absorbing: _busy,
         child: Padding(

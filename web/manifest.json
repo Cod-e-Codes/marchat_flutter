@@ -1,11 +1,11 @@
 {
-    "name": "marchat_flutter",
-    "short_name": "marchat_flutter",
+    "name": "marchat",
+    "short_name": "marchat",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
     "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "description": "marchat WebSocket chat client",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [
