@@ -39,6 +39,20 @@ String _powershellEncodedCommand(String script) {
   return base64Encode(bytes);
 }
 
+/// Short text for status line / logs when the socket drops or connect fails.
+String _wsDisconnectReason(Object error) {
+  if (error is WebSocketChannelException) {
+    final inner = error.inner;
+    if (inner != null) return _wsDisconnectReason(inner);
+    final m = error.message;
+    if (m != null && m.trim().isNotEmpty) return m.trim();
+  }
+  if (error is SocketException) {
+    return error.message;
+  }
+  return error.toString();
+}
+
 enum _NotifyMode { none, bell, desktop, both }
 
 class ChatScreen extends StatefulWidget {
@@ -61,6 +75,7 @@ class ChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<ChatScreen> {
   WebSocketChannel? _ch;
+  StreamSubscription<dynamic>? _socketSub;
 
   /// When true, socket `onDone`/`onError` must not call [setState] (e.g. [dispose] closed the sink).
   bool _suppressDisconnectUi = false;
@@ -159,6 +174,11 @@ class _ChatScreenState extends State<ChatScreen> {
     _suppressDisconnectUi = true;
     _reconnectTimer?.cancel();
     _bannerTimer?.cancel();
+    final sub = _socketSub;
+    _socketSub = null;
+    if (sub != null) {
+      unawaited(sub.cancel());
+    }
     _ch?.sink.close();
     _ch = null;
     _input.dispose();
@@ -178,11 +198,14 @@ class _ChatScreenState extends State<ChatScreen> {
   // ── Connection ───────────────────────────────────────────────────────────
 
   Future<void> _connect() async {
+    WebSocketChannel? newChannel;
     try {
-      setState(() {
-        _statusLine = 'Connecting…';
-        _connected = false;
-      });
+      if (mounted) {
+        setState(() {
+          _statusLine = 'Connecting…';
+          _connected = false;
+        });
+      }
 
       Uri uri = Uri.parse(widget.config.serverURL.trim());
       final qp = Map<String, String>.from(uri.queryParameters);
@@ -191,10 +214,21 @@ class _ChatScreenState extends State<ChatScreen> {
       }
       uri = uri.replace(queryParameters: qp);
 
-      _ch = WebSocketChannel.connect(uri);
-      // Header "live" dot uses _connected, which is set only after first inbound
-      // JSON in _onSocketData (not here when _ch is assigned).
+      newChannel = WebSocketChannel.connect(uri);
+      await newChannel.ready;
 
+      await _socketSub?.cancel();
+      _socketSub = newChannel.stream.listen(
+        _onSocketData,
+        onError: (Object e, StackTrace st) {
+          debugPrint('web socket stream error: $e\n$st');
+          _onDisconnect(_wsDisconnectReason(e));
+        },
+        onDone: () => _onDisconnect('closed'),
+        cancelOnError: true,
+      );
+
+      _ch = newChannel;
       final hs = <String, dynamic>{
         'username': widget.config.username,
         'admin': widget.isAdmin,
@@ -203,23 +237,29 @@ class _ChatScreenState extends State<ChatScreen> {
       };
       _ch!.sink.add(jsonEncode(hs));
 
-      _ch!.stream.listen(
-        _onSocketData,
-        onError: (_) => _onDisconnect('socket error'),
-        onDone: () => _onDisconnect('closed'),
-      );
-
       if (mounted) {
         setState(() {
           _reconnectDelay = const Duration(seconds: 1);
         });
       }
-    } catch (e) {
-      _onDisconnect('$e');
+    } catch (e, st) {
+      debugPrint('web socket connect error: $e\n$st');
+      _ch = null;
+      await _socketSub?.cancel();
+      _socketSub = null;
+      try {
+        await newChannel?.sink.close();
+      } catch (_) {}
+      _onDisconnect(_wsDisconnectReason(e));
     }
   }
 
   void _onDisconnect(String reason) {
+    final sub = _socketSub;
+    _socketSub = null;
+    if (sub != null) {
+      unawaited(sub.cancel());
+    }
     _ch?.sink.close();
     _ch = null;
     if (_suppressDisconnectUi || !mounted) return;
@@ -319,6 +359,37 @@ class _ChatScreenState extends State<ChatScreen> {
           clearReaction: true,
         );
       }
+    }
+
+    if (msg.type == WireTypes.edit && msg.messageId != 0) {
+      final idx = _messages.indexWhere((x) => x.messageId == msg.messageId);
+      if (!mounted) return;
+      if (idx >= 0) {
+        setState(() {
+          _messages[idx] = _messages[idx].copyWith(
+            content: msg.content,
+            edited: true,
+            encrypted: msg.encrypted,
+          );
+          _sending = false;
+        });
+      }
+      return;
+    }
+
+    if (msg.type == WireTypes.delete && msg.messageId != 0) {
+      final idx = _messages.indexWhere((x) => x.messageId == msg.messageId);
+      if (!mounted) return;
+      if (idx >= 0) {
+        setState(() {
+          _messages[idx] = _messages[idx].copyWith(
+            content: '[deleted]',
+            type: WireTypes.delete,
+          );
+          _sending = false;
+        });
+      }
+      return;
     }
 
     if (msg.type == WireTypes.file && msg.file != null) {
@@ -452,7 +523,12 @@ class _ChatScreenState extends State<ChatScreen> {
       _toast('[ERROR] Not connected');
       return;
     }
-    _ch!.sink.add(jsonEncode(m));
+    try {
+      _ch!.sink.add(jsonEncode(m));
+    } catch (e, st) {
+      debugPrint('web socket send error: $e\n$st');
+      _onDisconnect(_wsDisconnectReason(e));
+    }
   }
 
   Future<void> _sendWire(ChatWireMessage m) async {
@@ -1494,7 +1570,34 @@ class _ChatScreenState extends State<ChatScreen> {
               ),
             ),
           ),
-          Expanded(child: _richMessage(m.content)),
+          Expanded(
+            child: m.type == WireTypes.delete
+                ? Text(
+                    '[deleted]',
+                    style: TextStyle(
+                      color: t.timeFg,
+                      fontFamily: 'monospace',
+                      fontSize: 13,
+                      fontStyle: FontStyle.italic,
+                    ),
+                  )
+                : m.edited
+                ? Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '(edited) ',
+                        style: TextStyle(
+                          color: t.timeFg,
+                          fontFamily: 'monospace',
+                          fontSize: 12,
+                        ),
+                      ),
+                      Expanded(child: _richMessage(m.content)),
+                    ],
+                  )
+                : _richMessage(m.content),
+          ),
           if (_showMsgMeta && m.messageId != 0)
             Padding(
               padding: const EdgeInsets.only(left: 6),
