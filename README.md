@@ -8,7 +8,8 @@ Flutter desktop and multi-platform client for [marchat](https://github.com/Cod-e
 
 - Real-time messaging over WebSocket (string message types, admin commands, channels, DMs, structured commands aligned with the TUI)
 - Reactions (`type: reaction` with `reaction.target_id` / `emoji` / `is_removal`) update the transcript in place and render under the target message like the Go TUI
-- Optional global E2E: ChaCha20-Poly1305 on the wire, compatible with `shared.EncryptTextMessage` / `MARCHAT_GLOBAL_E2E_KEY`
+- Optional global E2E: ChaCha20-Poly1305 on the wire, compatible with `shared.EncryptTextMessage` / `MARCHAT_GLOBAL_E2E_KEY`. In chat, plain text **`E2E on`** (theme-tinted) appears in the header next to the socket dot when a key is loaded and the socket is up; the left status strip still shows **`Connected (E2E)`**. Rows that were **`encrypted` on the wire** keep that flag after decrypt and show a **`*`** after the time (`:msginfo` adds `#id, enc`), matching the Go client's metadata idea.
+- Chat composer: **Enter** sends, **Shift+Enter** starts a new line; **12-hour** times stay on one line in a wider time column; the header shows **Connected** / **Disconnected** next to the socket indicator.
 - Unlock existing `keystore.dat` with the same passphrase and format as `client/crypto/keystore.go` (v3 portable header or legacy path-salt)
 - File send and save
 - Message list times use the device local timezone (same idea as the TUI when the server sends UTC in the JSON created_at field)

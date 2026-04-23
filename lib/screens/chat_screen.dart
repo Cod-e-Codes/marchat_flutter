@@ -86,7 +86,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   final _input = TextEditingController();
   final _scroll = ScrollController();
-  final _inputFocus = FocusNode();
+  late final FocusNode _inputFocus;
 
   final List<ChatWireMessage> _messages = [];
   List<String> _users = [];
@@ -134,6 +134,7 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
+    _inputFocus = FocusNode(onKeyEvent: _onInputBarKey);
     _helpBodyText = _buildHelpBody();
     _twentyFourHour = widget.config.twentyFourHour;
     final tid = widget.config.chatThemeId.toLowerCase();
@@ -153,7 +154,12 @@ class _ChatScreenState extends State<ChatScreen> {
       ..writeln(
         'Session: ${widget.e2e != null ? "E2E (global key)" : "Plain text"}',
       )
-      ..writeln('Shortcuts: Ctrl+H help · Ctrl+T theme · Enter send')
+      ..writeln(
+        'With E2E loaded, the header shows E2E on next to the socket dot when connected; a * after the time means the payload was encrypted on the wire (TUI msginfo style).',
+      )
+      ..writeln(
+        'Shortcuts: Ctrl+H help · Ctrl+T theme · Enter send · Shift+Enter new line',
+      )
       ..writeln()
       ..writeln(':sendfile [path]  :savefile <name|id:n>  :code')
       ..writeln(':theme <id>  :themes  :time  :msginfo  :clear  :export [file]')
@@ -197,6 +203,18 @@ class _ChatScreenState extends State<ChatScreen> {
     _bannerTimer = Timer(d, () {
       if (mounted) setState(() => _banner = '');
     });
+  }
+
+  /// Enter sends; Shift+Enter stays default (newline in multiline field).
+  KeyEventResult _onInputBarKey(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    if (event.logicalKey != LogicalKeyboardKey.enter) {
+      return KeyEventResult.ignored;
+    }
+    if (HardwareKeyboard.instance.isShiftPressed) return KeyEventResult.ignored;
+    if (_input.text.trim().isEmpty) return KeyEventResult.handled;
+    unawaited(_submitInput());
+    return KeyEventResult.handled;
   }
 
   // ── Connection ───────────────────────────────────────────────────────────
@@ -288,7 +306,7 @@ class _ChatScreenState extends State<ChatScreen> {
       if (!_connected && mounted) {
         setState(() {
           _connected = true;
-          _statusLine = 'Connected';
+          _statusLine = widget.e2e != null ? 'Connected (E2E)' : 'Connected';
         });
       }
 
@@ -352,7 +370,6 @@ class _ChatScreenState extends State<ChatScreen> {
         if (msg.type == WireTypes.file && msg.file != null) {
           final dec = await widget.e2e!.decryptRaw(msg.file!.data);
           msg = msg.copyWith(
-            encrypted: false,
             file: WireFileMeta(
               filename: msg.file!.filename,
               size: dec.length,
@@ -363,7 +380,7 @@ class _ChatScreenState extends State<ChatScreen> {
           final plain = await widget.e2e!.decryptIncomingTextPayload(
             msg.content,
           );
-          msg = msg.copyWith(content: plain, encrypted: false);
+          msg = msg.copyWith(content: plain);
         }
       } catch (e) {
         msg = msg.copyWith(
@@ -1184,10 +1201,17 @@ class _ChatScreenState extends State<ChatScreen> {
       return '${local.hour.toString().padLeft(2, '0')}:'
           '${local.minute.toString().padLeft(2, '0')}';
     }
-    final h = local.hour % 12 == 0 ? 12 : local.hour % 12;
+    final h12 = local.hour % 12 == 0 ? 12 : local.hour % 12;
     final ap = local.hour < 12 ? 'AM' : 'PM';
-    return '${h.toString().padLeft(2, '0')}:'
-        '${local.minute.toString().padLeft(2, '0')} $ap';
+    return '$h12:${local.minute.toString().padLeft(2, '0')} $ap';
+  }
+
+  double get _timeColumnWidth => _twentyFourHour ? 44.0 : 68.0;
+
+  String _timeCellText(ChatWireMessage m) {
+    final clock = _fmtClock(m.createdAt);
+    if (widget.e2e != null && m.encrypted) return '$clock *';
+    return clock;
   }
 
   Widget _header() {
@@ -1261,7 +1285,21 @@ class _ChatScreenState extends State<ChatScreen> {
             onPressed: () => setState(() => _showUsersPanel = !_showUsersPanel),
             icon: Icon(Icons.people_outline, color: t.headerFg, size: 20),
           ),
-          const SizedBox(width: 4),
+          if (widget.e2e != null) ...[
+            const SizedBox(width: 8),
+            Text(
+              _connected ? 'E2E on' : 'E2E',
+              style: TextStyle(
+                color: _connected
+                    ? (Color.lerp(t.headerFg, t.accentFg, 0.55) ?? t.accentFg)
+                    : t.headerFg.withValues(alpha: 0.42),
+                fontFamily: 'monospace',
+                fontSize: 10,
+                height: 1.0,
+              ),
+            ),
+          ],
+          const SizedBox(width: 8),
           Container(
             width: 8,
             height: 8,
@@ -1272,7 +1310,7 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
           const SizedBox(width: 5),
           Text(
-            _connected ? 'live' : 'off',
+            _connected ? 'Connected' : 'Disconnected',
             style: TextStyle(
               color: t.headerFg.withValues(alpha: 0.65),
               fontFamily: 'monospace',
@@ -1515,7 +1553,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Widget _messageLine(ChatWireMessage m) {
     final me = m.sender == widget.config.username;
-    final ts = _fmtClock(m.createdAt);
+    final ts = _timeCellText(m);
     if (m.type == WireTypes.file && m.file != null) {
       final saveArg = m.messageId != 0 ? 'id:${m.messageId}' : m.file!.filename;
       return Padding(
@@ -1524,9 +1562,12 @@ class _ChatScreenState extends State<ChatScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             SizedBox(
-              width: 44,
+              width: _timeColumnWidth,
               child: Text(
                 ts,
+                maxLines: 1,
+                softWrap: false,
+                overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   color: t.timeFg,
                   fontFamily: 'monospace',
@@ -1574,9 +1615,12 @@ class _ChatScreenState extends State<ChatScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
-            width: 44,
+            width: _timeColumnWidth,
             child: Text(
               ts,
+              maxLines: 1,
+              softWrap: false,
+              overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 color: t.timeFg,
                 fontFamily: 'monospace',
@@ -1636,7 +1680,7 @@ class _ChatScreenState extends State<ChatScreen> {
             Padding(
               padding: const EdgeInsets.only(left: 6),
               child: Text(
-                '#${m.messageId}${m.encrypted ? " E" : ""}',
+                '#${m.messageId}${m.encrypted ? ", enc" : ""}',
                 style: TextStyle(
                   color: t.timeFg,
                   fontSize: 10,
@@ -1782,8 +1826,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Widget _inputBar() {
     final hint = _dmRecipient != null
-        ? 'DM to $_dmRecipient; :dm to exit'
-        : 'Message or command (:help in server / Ctrl+H here)';
+        ? 'DM to $_dmRecipient; :dm to exit. Enter send, Shift+Enter newline.'
+        : 'Message or command. Enter send, Shift+Enter newline. Ctrl+H help.';
     return Material(
       color: t.sidebarBg,
       child: Padding(
@@ -1807,6 +1851,7 @@ class _ChatScreenState extends State<ChatScreen> {
               child: TextField(
                 controller: _input,
                 focusNode: _inputFocus,
+                keyboardType: TextInputType.multiline,
                 style: TextStyle(
                   color: t.inputFg,
                   fontFamily: 'monospace',
