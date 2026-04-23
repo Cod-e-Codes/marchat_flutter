@@ -10,6 +10,7 @@ Flutter desktop and multi-platform client for [marchat](https://github.com/Cod-e
 - Optional global E2E: ChaCha20-Poly1305 on the wire, compatible with `shared.EncryptTextMessage` / `MARCHAT_GLOBAL_E2E_KEY`
 - Unlock existing `keystore.dat` with the same passphrase and format as `client/crypto/keystore.go` (v3 portable header or legacy path-salt)
 - File send and save
+- Message list times use the device local timezone (same idea as the TUI when the server sends UTC in the JSON created_at field)
 - Built-in chat themes matching TUI order: `system`, `patriot`, `retro`, `modern` (`:theme`, `:themes`, Ctrl+T)
 - Admin commands (kick, ban, unban, allow, forcedisconnect, cleardb, backup, stats, plugin-style `:` commands to the server)
 

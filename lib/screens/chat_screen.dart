@@ -853,7 +853,7 @@ class _ChatScreenState extends State<ChatScreen> {
       }
       final sb = StringBuffer();
       for (final m in _messages) {
-        final ts = m.createdAt.toIso8601String();
+        final ts = m.createdAt.toLocal().toIso8601String();
         sb.writeln('[$ts] ${m.sender}: ${m.content}');
       }
       try {
@@ -1080,15 +1080,17 @@ class _ChatScreenState extends State<ChatScreen> {
     _toast('[OK] Theme → ${t.name}');
   }
 
+  /// Formats [dt] using the device local timezone for display.
   String _fmtClock(DateTime dt) {
+    final local = dt.toLocal();
     if (_twentyFourHour) {
-      return '${dt.hour.toString().padLeft(2, '0')}:'
-          '${dt.minute.toString().padLeft(2, '0')}';
+      return '${local.hour.toString().padLeft(2, '0')}:'
+          '${local.minute.toString().padLeft(2, '0')}';
     }
-    final h = dt.hour % 12 == 0 ? 12 : dt.hour % 12;
-    final ap = dt.hour < 12 ? 'AM' : 'PM';
+    final h = local.hour % 12 == 0 ? 12 : local.hour % 12;
+    final ap = local.hour < 12 ? 'AM' : 'PM';
     return '${h.toString().padLeft(2, '0')}:'
-        '${dt.minute.toString().padLeft(2, '0')} $ap';
+        '${local.minute.toString().padLeft(2, '0')} $ap';
   }
 
   Widget _header() {
