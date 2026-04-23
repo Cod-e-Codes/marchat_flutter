@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -397,7 +398,15 @@ class _ConfigScreenState extends State<ConfigScreen> {
                 Row(
                   children: [
                     OutlinedButton(
-                      onPressed: _busy ? null : () => SystemNavigator.pop(),
+                      onPressed: _busy
+                          ? null
+                          : () {
+                              if (kIsWeb) {
+                                SystemNavigator.pop();
+                              } else {
+                                exit(0);
+                              }
+                            },
                       child: const Text('Exit'),
                     ),
                     const SizedBox(width: 12),

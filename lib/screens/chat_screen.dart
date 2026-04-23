@@ -61,6 +61,9 @@ class ChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<ChatScreen> {
   WebSocketChannel? _ch;
+
+  /// When true, socket `onDone`/`onError` must not call [setState] (e.g. [dispose] closed the sink).
+  bool _suppressDisconnectUi = false;
   bool _connected = false;
   Timer? _reconnectTimer;
   Duration _reconnectDelay = const Duration(seconds: 1);
@@ -153,12 +156,14 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    _suppressDisconnectUi = true;
+    _reconnectTimer?.cancel();
+    _bannerTimer?.cancel();
+    _ch?.sink.close();
+    _ch = null;
     _input.dispose();
     _scroll.dispose();
     _inputFocus.dispose();
-    _ch?.sink.close();
-    _reconnectTimer?.cancel();
-    _bannerTimer?.cancel();
     super.dispose();
   }
 
@@ -217,7 +222,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void _onDisconnect(String reason) {
     _ch?.sink.close();
     _ch = null;
-    if (!mounted) return;
+    if (_suppressDisconnectUi || !mounted) return;
     setState(() {
       _connected = false;
       _statusLine = 'Disconnected ($reason); retrying…';
