@@ -110,7 +110,9 @@ class _ChatScreenState extends State<ChatScreen> {
   String _selectedUser = '';
 
   String _activeChannel = 'general';
-  String? _dmRecipient;
+  String? _activeDmKey;
+  final Map<String, int> _dmUnreadByKey = {};
+  final Map<String, String> _dmDisplayByKey = {};
 
   bool _showMsgMeta = false;
 
@@ -167,7 +169,7 @@ class _ChatScreenState extends State<ChatScreen> {
         ':bell  :bell-mention  :notify-mode …  :notify-desktop  :notify-status',
       )
       ..writeln(':quiet h h  :quiet-off  :focus [dur]  :focus-off')
-      ..writeln(':dm [user [msg]]  :join  :leave  :channels')
+      ..writeln(':dm <user> <msg>  :join  :leave  :channels')
       ..writeln(':edit :delete :search :react :pin :pinned')
       ..writeln(':q quit');
     if (widget.isAdmin) {
@@ -432,6 +434,7 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     _maybeNotify(msg);
+    _trackDmUnread(msg);
 
     if (!mounted) return;
     setState(() {
@@ -454,6 +457,61 @@ class _ChatScreenState extends State<ChatScreen> {
         );
       }
     });
+  }
+
+  String _dmKey(String username) => username.toLowerCase();
+
+  String? _dmPeer(ChatWireMessage m) {
+    if (m.type != WireTypes.dm) return null;
+    final me = widget.config.username.toLowerCase();
+    final sender = m.sender.toLowerCase();
+    final recipient = m.recipient.toLowerCase();
+    if (sender == me && m.recipient.isNotEmpty) return m.recipient;
+    if (recipient == me && m.sender.isNotEmpty) return m.sender;
+    return null;
+  }
+
+  void _trackDmUnread(ChatWireMessage m) {
+    final peer = _dmPeer(m);
+    if (peer == null) return;
+    final key = _dmKey(peer);
+    _dmDisplayByKey[key] = peer;
+    final fromOtherUser =
+        m.sender.toLowerCase() != widget.config.username.toLowerCase();
+    if (fromOtherUser && _activeDmKey != key) {
+      _dmUnreadByKey[key] = (_dmUnreadByKey[key] ?? 0) + 1;
+    }
+  }
+
+  List<String> _dmThreadKeys() {
+    final ordered = <String>[];
+    final seen = <String>{};
+    for (var i = _messages.length - 1; i >= 0; i--) {
+      final peer = _dmPeer(_messages[i]);
+      if (peer == null) continue;
+      final key = _dmKey(peer);
+      _dmDisplayByKey[key] = peer;
+      if (seen.add(key)) {
+        ordered.add(key);
+      }
+    }
+    return ordered;
+  }
+
+  void _openDmThread(String key) {
+    setState(() {
+      _activeDmKey = _activeDmKey == key ? null : key;
+      if (_activeDmKey == key) {
+        _dmUnreadByKey.remove(key);
+      }
+    });
+  }
+
+  List<ChatWireMessage> _visibleMessages() {
+    if (_activeDmKey == null) return _messages;
+    return _messages
+        .where((m) => _dmKey(_dmPeer(m) ?? '') == _activeDmKey)
+        .toList();
   }
 
   // ── Notifications (TUI-aligned) ─────────────────────────────────────────
@@ -596,6 +654,9 @@ class _ChatScreenState extends State<ChatScreen> {
       setState(() {
         _messages.clear();
         _reactionsByTarget.clear();
+        _dmUnreadByKey.clear();
+        _dmDisplayByKey.clear();
+        _activeDmKey = null;
       });
       _toast('[OK] Chat cleared');
       return true;
@@ -823,23 +884,13 @@ class _ChatScreenState extends State<ChatScreen> {
 
     if (text.startsWith(':dm')) {
       final parts = text.split(RegExp(r'\s+'));
-      if (parts.length == 1) {
-        setState(() => _dmRecipient = null);
-        _toast('[OK] DM mode off');
-        return true;
-      }
-      if (parts.length == 2) {
-        final u = parts[1];
-        if (_dmRecipient == u) {
-          _toast('[OK] DM already: $u');
-          return true;
-        }
-        setState(() => _dmRecipient = u);
-        _toast('[OK] DM → $_dmRecipient');
+      if (parts.length < 3) {
+        _toast('[INFO] Usage: :dm <user> <message>');
         return true;
       }
       final target = parts[1];
       final body = parts.sublist(2).join(' ');
+      final key = _dmKey(target);
       await _sendWire(
         ChatWireMessage(
           sender: widget.config.username,
@@ -849,6 +900,11 @@ class _ChatScreenState extends State<ChatScreen> {
           recipient: target,
         ),
       );
+      setState(() {
+        _dmDisplayByKey[key] = target;
+        _activeDmKey = key;
+        _dmUnreadByKey.remove(key);
+      });
       return true;
     }
 
@@ -1027,17 +1083,7 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() => _sending = true);
 
     try {
-      if (_dmRecipient != null) {
-        await _sendWire(
-          ChatWireMessage(
-            sender: widget.config.username,
-            content: text,
-            createdAt: DateTime.now(),
-            type: WireTypes.dm,
-            recipient: _dmRecipient!,
-          ),
-        );
-      } else if (widget.e2e != null) {
+      if (widget.e2e != null) {
         final enc = await widget.e2e!.encryptOutgoingText(
           widget.config.username,
           text,
@@ -1215,8 +1261,8 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Widget _header() {
-    final title = _dmRecipient != null
-        ? 'DM: $_dmRecipient'
+    final title = _activeDmKey != null
+        ? 'DM: ${_dmDisplayByKey[_activeDmKey!] ?? _activeDmKey}'
         : '#$_activeChannel';
     return Container(
       height: 42,
@@ -1363,6 +1409,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Widget _channelPanel() {
+    final dmKeys = _dmThreadKeys();
     return Container(
       width: 168,
       color: t.sidebarBg,
@@ -1388,22 +1435,81 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
           const Divider(height: 1),
           _panelSection('DM'),
-          ListTile(
-            dense: true,
-            title: Text(
-              _dmRecipient ?? '(off)',
-              style: TextStyle(
-                color: t.msgFg,
-                fontFamily: 'monospace',
-                fontSize: 12,
+          if (dmKeys.isEmpty)
+            ListTile(
+              dense: true,
+              title: Text(
+                'No active DMs',
+                style: TextStyle(
+                  color: t.timeFg,
+                  fontFamily: 'monospace',
+                  fontSize: 11,
+                ),
+              ),
+              subtitle: Text(
+                'Use :dm <user> <message>',
+                style: TextStyle(color: t.timeFg, fontSize: 10),
               ),
             ),
-            subtitle: Text(
-              ':dm user | :dm',
-              style: TextStyle(color: t.timeFg, fontSize: 10),
+          if (dmKeys.isNotEmpty)
+            Expanded(
+              child: ListView.builder(
+                itemCount: dmKeys.length,
+                itemBuilder: (_, i) {
+                  final key = dmKeys[i];
+                  final unread = _dmUnreadByKey[key] ?? 0;
+                  final display = _dmDisplayByKey[key] ?? key;
+                  final selected = _activeDmKey == key;
+                  return Material(
+                    color: selected
+                        ? t.borderColor.withValues(alpha: 0.2)
+                        : Colors.transparent,
+                    child: ListTile(
+                      dense: true,
+                      title: Text(
+                        display,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: t.msgFg,
+                          fontFamily: 'monospace',
+                          fontSize: 12,
+                          fontWeight: unread > 0
+                              ? FontWeight.bold
+                              : FontWeight.normal,
+                        ),
+                      ),
+                      trailing: unread > 0
+                          ? Container(
+                              constraints: const BoxConstraints(minWidth: 18),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: t.accentFg.withValues(alpha: 0.2),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Text(
+                                '$unread',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  color: t.accentFg,
+                                  fontFamily: 'monospace',
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            )
+                          : null,
+                      onTap: () => _openDmThread(key),
+                    ),
+                  );
+                },
+              ),
             ),
-          ),
-          const Spacer(),
+          if (dmKeys.isNotEmpty) const Divider(height: 1),
+          if (dmKeys.isEmpty) const Spacer(),
           if (widget.isAdmin)
             ListTile(
               dense: true,
@@ -1738,6 +1844,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final visibleMessages = _visibleMessages();
     return CallbackShortcuts(
       bindings: {
         const SingleActivator(LogicalKeyboardKey.keyH, control: true): () =>
@@ -1788,10 +1895,12 @@ class _ChatScreenState extends State<ChatScreen> {
                                 ),
                               ),
                             ),
-                            child: _messages.isEmpty
+                            child: visibleMessages.isEmpty
                                 ? Center(
                                     child: Text(
-                                      'No messages yet.',
+                                      _activeDmKey == null
+                                          ? 'No messages yet.'
+                                          : 'No messages in this DM thread.',
                                       style: TextStyle(
                                         color: t.timeFg,
                                         fontFamily: 'monospace',
@@ -1803,9 +1912,9 @@ class _ChatScreenState extends State<ChatScreen> {
                                     padding: const EdgeInsets.symmetric(
                                       vertical: 8,
                                     ),
-                                    itemCount: _messages.length,
+                                    itemCount: visibleMessages.length,
                                     itemBuilder: (_, i) =>
-                                        _messageLine(_messages[i]),
+                                        _messageLine(visibleMessages[i]),
                                   ),
                           ),
                         ),
@@ -1825,9 +1934,8 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Widget _inputBar() {
-    final hint = _dmRecipient != null
-        ? 'DM to $_dmRecipient; :dm to exit. Enter send, Shift+Enter newline.'
-        : 'Message or command. Enter send, Shift+Enter newline. Ctrl+H help.';
+    final hint =
+        'Message or command. Use :dm <user> <message>. Enter send, Shift+Enter newline. Ctrl+H help.';
     return Material(
       color: t.sidebarBg,
       child: Padding(
@@ -1838,7 +1946,9 @@ class _ChatScreenState extends State<ChatScreen> {
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
               color: t.borderColor.withValues(alpha: 0.2),
               child: Text(
-                _dmRecipient != null ? '@$_dmRecipient' : '#$_activeChannel',
+                _activeDmKey != null
+                    ? '@${_dmDisplayByKey[_activeDmKey!] ?? _activeDmKey}'
+                    : '#$_activeChannel',
                 style: TextStyle(
                   color: t.accentFg,
                   fontFamily: 'monospace',
