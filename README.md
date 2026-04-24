@@ -4,6 +4,19 @@
 
 Flutter desktop and multi-platform client for [marchat](https://github.com/Cod-e-Codes/marchat), a real-time chat server using WebSocket JSON and the same wire types as the official Go TUI client.
 
+**Status:** Primary GUI focus for the marchat ecosystem.
+
+## Relationship to marchat
+
+This is an optional graphical client for the main [marchat](https://github.com/Cod-e-Codes/marchat) project.
+
+- The terminal client in `marchat` remains the reference client and protocol source.
+- `marchat_flutter` is the recommended GUI path for users who want desktop or mobile UI.
+- Wire message compatibility follows [PROTOCOL.md](https://github.com/Cod-e-Codes/marchat/blob/main/PROTOCOL.md).
+- Plugin registry defaults and catalog come from [marchat-plugins](https://github.com/Cod-e-Codes/marchat-plugins).
+
+**Also see:** [marchat-gui](https://github.com/Cod-e-Codes/marchat-gui) (Go/Fyne companion client).
+
 ## Features
 
 - Real-time messaging over WebSocket (string message types, admin commands, channels, DMs, structured commands aligned with the TUI)
