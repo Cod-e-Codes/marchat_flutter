@@ -146,6 +146,9 @@ Use in-app help (Ctrl+H) and the marchat TUI help for the full command set.
 - Send a direct message with `:dm <user> <message>`.
 - There is no DM send toggle mode in the composer.
 - The left sidebar shows users who have sent DMs to you or received DMs from you.
+- DM messages are not shown in the default channel timeline.
+- When a DM thread is selected, composer sends go to that user as DMs.
+- When no DM thread is selected, composer sends go to the normal channel chat.
 - Click a DM user in the sidebar to view that DM thread and clear its unread count.
 
 ## License

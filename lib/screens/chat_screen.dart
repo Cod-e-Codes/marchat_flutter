@@ -529,7 +529,9 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   List<ChatWireMessage> _visibleMessages() {
-    if (_activeDmKey == null) return _messages;
+    if (_activeDmKey == null) {
+      return _messages.where((m) => m.type != WireTypes.dm).toList();
+    }
     return _messages
         .where((m) => _dmKey(_dmPeer(m) ?? '') == _activeDmKey)
         .toList();
@@ -1104,7 +1106,18 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() => _sending = true);
 
     try {
-      if (widget.e2e != null) {
+      if (_activeDmKey != null) {
+        final recipient = _dmDisplayByKey[_activeDmKey!] ?? _activeDmKey!;
+        await _sendWire(
+          ChatWireMessage(
+            sender: widget.config.username,
+            content: text,
+            createdAt: DateTime.now(),
+            type: WireTypes.dm,
+            recipient: recipient,
+          ),
+        );
+      } else if (widget.e2e != null) {
         final enc = await widget.e2e!.encryptOutgoingText(
           widget.config.username,
           text,
