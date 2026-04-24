@@ -3,9 +3,11 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../app_config.dart';
@@ -105,6 +107,7 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _showChannelsPanel = true;
   bool _showUsersPanel = true;
   bool _showHelp = false;
+  bool _allowInsecureTls = false;
 
   int _selectedUserIndex = -1;
   String _selectedUser = '';
@@ -238,7 +241,7 @@ class _ChatScreenState extends State<ChatScreen> {
       }
       uri = uri.replace(queryParameters: qp);
 
-      newChannel = WebSocketChannel.connect(uri);
+      newChannel = _connectChannel(uri);
       await newChannel.ready;
 
       await _socketSub?.cancel();
@@ -264,6 +267,11 @@ class _ChatScreenState extends State<ChatScreen> {
       if (mounted) {
         setState(() {
           _reconnectDelay = const Duration(seconds: 1);
+          if (_connected) return;
+          if (_allowInsecureTls) {
+            _statusLine =
+                'Connected (dev TLS override enabled for untrusted cert)';
+          }
         });
       }
     } catch (e, st) {
@@ -276,6 +284,19 @@ class _ChatScreenState extends State<ChatScreen> {
       } catch (_) {}
       _onDisconnect(_wsDisconnectReason(e));
     }
+  }
+
+  WebSocketChannel _connectChannel(Uri uri) {
+    if (uri.scheme != 'wss' || !kDebugMode) {
+      _allowInsecureTls = false;
+      return WebSocketChannel.connect(uri);
+    }
+    final client = HttpClient()
+      ..badCertificateCallback = (X509Certificate cert, String host, int port) {
+        _allowInsecureTls = true;
+        return true;
+      };
+    return IOWebSocketChannel.connect(uri, customClient: client);
   }
 
   void _onDisconnect(String reason) {
@@ -1260,7 +1281,7 @@ class _ChatScreenState extends State<ChatScreen> {
     return clock;
   }
 
-  Widget _header() {
+  Widget _header({required bool compact}) {
     final title = _activeDmKey != null
         ? 'DM: ${_dmDisplayByKey[_activeDmKey!] ?? _activeDmKey}'
         : '#$_activeChannel';
@@ -1272,8 +1293,10 @@ class _ChatScreenState extends State<ChatScreen> {
         children: [
           IconButton(
             tooltip: 'Channels',
-            onPressed: () =>
-                setState(() => _showChannelsPanel = !_showChannelsPanel),
+            onPressed: compact
+                ? () => _openMobilePanel(showUsers: false)
+                : () =>
+                      setState(() => _showChannelsPanel = !_showChannelsPanel),
             icon: Icon(Icons.menu, color: t.headerFg, size: 20),
           ),
           Text(
@@ -1285,24 +1308,27 @@ class _ChatScreenState extends State<ChatScreen> {
               fontSize: 14,
             ),
           ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 6),
-            child: Text(
-              '›',
-              style: TextStyle(color: t.headerFg.withValues(alpha: 0.5)),
-            ),
-          ),
-          Expanded(
-            child: Text(
-              title,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: t.headerFg,
-                fontFamily: 'monospace',
-                fontSize: 13,
+          if (!compact) ...[
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 6),
+              child: Text(
+                '›',
+                style: TextStyle(color: t.headerFg.withValues(alpha: 0.5)),
               ),
             ),
-          ),
+            Expanded(
+              child: Text(
+                title,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: t.headerFg,
+                  fontFamily: 'monospace',
+                  fontSize: 13,
+                ),
+              ),
+            ),
+          ] else
+            const Spacer(),
           if (_inFocus()) ...[
             Icon(Icons.do_not_disturb_on_outlined, color: t.bannerFg, size: 16),
             const SizedBox(width: 4),
@@ -1328,7 +1354,9 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
           IconButton(
             tooltip: 'Users',
-            onPressed: () => setState(() => _showUsersPanel = !_showUsersPanel),
+            onPressed: compact
+                ? () => _openMobilePanel(showUsers: true)
+                : () => setState(() => _showUsersPanel = !_showUsersPanel),
             icon: Icon(Icons.people_outline, color: t.headerFg, size: 20),
           ),
           if (widget.e2e != null) ...[
@@ -1355,14 +1383,15 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           ),
           const SizedBox(width: 5),
-          Text(
-            _connected ? 'Connected' : 'Disconnected',
-            style: TextStyle(
-              color: t.headerFg.withValues(alpha: 0.65),
-              fontFamily: 'monospace',
-              fontSize: 10,
+          if (!compact)
+            Text(
+              _connected ? 'Connected' : 'Disconnected',
+              style: TextStyle(
+                color: t.headerFg.withValues(alpha: 0.65),
+                fontFamily: 'monospace',
+                fontSize: 10,
+              ),
             ),
-          ),
         ],
       ),
     );
@@ -1408,10 +1437,10 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  Widget _channelPanel() {
+  Widget _channelPanel({bool compact = false}) {
     final dmKeys = _dmThreadKeys();
     return Container(
-      width: 168,
+      width: compact ? double.infinity : 168,
       color: t.sidebarBg,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1546,9 +1575,9 @@ class _ChatScreenState extends State<ChatScreen> {
     ),
   );
 
-  Widget _userPanel() {
+  Widget _userPanel({bool compact = false}) {
     return Container(
-      width: 160,
+      width: compact ? double.infinity : 160,
       color: t.sidebarBg,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1845,6 +1874,7 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   Widget build(BuildContext context) {
     final visibleMessages = _visibleMessages();
+    final compact = MediaQuery.of(context).size.width < 800;
     return CallbackShortcuts(
       bindings: {
         const SingleActivator(LogicalKeyboardKey.keyH, control: true): () =>
@@ -1856,84 +1886,88 @@ class _ChatScreenState extends State<ChatScreen> {
         autofocus: true,
         child: Scaffold(
           backgroundColor: t.bg,
-          body: Stack(
-            children: [
-              Column(
-                children: [
-                  _header(),
-                  _bannerBar(),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 4,
-                    ),
-                    color: t.sidebarBg,
-                    child: Text(
-                      _statusLine,
-                      style: TextStyle(
-                        color: t.otherFg,
-                        fontFamily: 'monospace',
-                        fontSize: 11,
+          body: SafeArea(
+            top: true,
+            bottom: false,
+            child: Stack(
+              children: [
+                Column(
+                  children: [
+                    _header(compact: compact),
+                    _bannerBar(),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 4,
+                      ),
+                      color: t.sidebarBg,
+                      child: Text(
+                        _statusLine,
+                        style: TextStyle(
+                          color: t.otherFg,
+                          fontFamily: 'monospace',
+                          fontSize: 11,
+                        ),
                       ),
                     ),
-                  ),
-                  Expanded(
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        if (_showChannelsPanel) _channelPanel(),
-                        Expanded(
-                          child: Container(
-                            decoration: BoxDecoration(
-                              border: Border(
-                                left: BorderSide(
-                                  color: t.borderColor.withValues(alpha: 0.2),
-                                ),
-                                right: BorderSide(
-                                  color: t.borderColor.withValues(alpha: 0.2),
+                    Expanded(
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          if (!compact && _showChannelsPanel) _channelPanel(),
+                          Expanded(
+                            child: Container(
+                              decoration: BoxDecoration(
+                                border: Border(
+                                  left: BorderSide(
+                                    color: t.borderColor.withValues(alpha: 0.2),
+                                  ),
+                                  right: BorderSide(
+                                    color: t.borderColor.withValues(alpha: 0.2),
+                                  ),
                                 ),
                               ),
-                            ),
-                            child: visibleMessages.isEmpty
-                                ? Center(
-                                    child: Text(
-                                      _activeDmKey == null
-                                          ? 'No messages yet.'
-                                          : 'No messages in this DM thread.',
-                                      style: TextStyle(
-                                        color: t.timeFg,
-                                        fontFamily: 'monospace',
+                              child: visibleMessages.isEmpty
+                                  ? Center(
+                                      child: Text(
+                                        _activeDmKey == null
+                                            ? 'No messages yet.'
+                                            : 'No messages in this DM thread.',
+                                        style: TextStyle(
+                                          color: t.timeFg,
+                                          fontFamily: 'monospace',
+                                        ),
                                       ),
+                                    )
+                                  : ListView.builder(
+                                      controller: _scroll,
+                                      padding: const EdgeInsets.symmetric(
+                                        vertical: 8,
+                                      ),
+                                      itemCount: visibleMessages.length,
+                                      itemBuilder: (_, i) =>
+                                          _messageLine(visibleMessages[i]),
                                     ),
-                                  )
-                                : ListView.builder(
-                                    controller: _scroll,
-                                    padding: const EdgeInsets.symmetric(
-                                      vertical: 8,
-                                    ),
-                                    itemCount: visibleMessages.length,
-                                    itemBuilder: (_, i) =>
-                                        _messageLine(visibleMessages[i]),
-                                  ),
+                            ),
                           ),
-                        ),
-                        if (_showUsersPanel) _userPanel(),
-                      ],
+                          if (!compact && _showUsersPanel) _userPanel(),
+                        ],
+                      ),
                     ),
-                  ),
-                  _inputBar(),
-                ],
-              ),
-              if (_showHelp) _helpOverlay(),
-            ],
+                    _inputBar(compact: compact),
+                  ],
+                ),
+                if (_showHelp) _helpOverlay(),
+              ],
+            ),
           ),
         ),
       ),
     );
   }
 
-  Widget _inputBar() {
+  Widget _inputBar({required bool compact}) {
     final hint =
         'Message or command. Use :dm <user> <message>. Enter send, Shift+Enter newline. Ctrl+H help.';
     return Material(
@@ -1942,21 +1976,23 @@ class _ChatScreenState extends State<ChatScreen> {
         padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
         child: Row(
           children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-              color: t.borderColor.withValues(alpha: 0.2),
-              child: Text(
-                _activeDmKey != null
-                    ? '@${_dmDisplayByKey[_activeDmKey!] ?? _activeDmKey}'
-                    : '#$_activeChannel',
-                style: TextStyle(
-                  color: t.accentFg,
-                  fontFamily: 'monospace',
-                  fontSize: 12,
+            if (!compact) ...[
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                color: t.borderColor.withValues(alpha: 0.2),
+                child: Text(
+                  _activeDmKey != null
+                      ? '@${_dmDisplayByKey[_activeDmKey!] ?? _activeDmKey}'
+                      : '#$_activeChannel',
+                  style: TextStyle(
+                    color: t.accentFg,
+                    fontFamily: 'monospace',
+                    fontSize: 12,
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(width: 6),
+              const SizedBox(width: 6),
+            ],
             Expanded(
               child: TextField(
                 controller: _input,
@@ -1973,7 +2009,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 decoration: InputDecoration(
                   filled: true,
                   fillColor: t.inputBg,
-                  hintText: hint,
+                  hintText: compact ? 'Message or command…' : hint,
                   hintStyle: TextStyle(
                     color: t.timeFg,
                     fontFamily: 'monospace',
@@ -2008,6 +2044,22 @@ class _ChatScreenState extends State<ChatScreen> {
               child: Text(_sending ? '…' : 'Send'),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openMobilePanel({required bool showUsers}) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: t.sidebarBg,
+      isScrollControlled: true,
+      builder: (ctx) => SafeArea(
+        child: SizedBox(
+          height: MediaQuery.of(ctx).size.height * 0.65,
+          child: showUsers
+              ? _userPanel(compact: true)
+              : _channelPanel(compact: true),
         ),
       ),
     );

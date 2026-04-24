@@ -61,6 +61,12 @@ Windows:
 flutter run -d windows
 ```
 
+Android emulator:
+
+```
+flutter run -d emulator-5554
+```
+
 ## Test
 
 ```
@@ -93,6 +99,22 @@ Artifacts:
 - Default server URL on the connect screen: `ws://localhost:8080/ws` (adjust for `wss://` behind a proxy as needed).
 - Entry point: `lib/main.dart`. Main chat UI: `lib/screens/chat_screen.dart`.
 - The connect screen can set **24-hour clock** and **built-in chat theme**; those values persist in SharedPreferences (`marchat_chat_twenty_four_hour`, `marchat_chat_theme_id`) and stay in sync when you use `:time`, `:theme`, or Ctrl+T in chat.
+
+### Android emulator and localhost
+
+When using the Android emulator, `localhost` inside the app is the emulator itself, not your PC host process.
+If your server is running on your PC at port 8080, map emulator port 8080 to host port 8080:
+
+```
+adb reverse tcp:8080 tcp:8080
+```
+
+After that, `ws://localhost:8080/ws` or `wss://localhost:8080/ws` in the app will target your host server through the reverse tunnel.
+
+### TLS note for debug Android builds
+
+In debug builds on Android, `wss://` connections currently allow untrusted/self-signed certificates for local development convenience.
+Use a properly trusted certificate chain for production builds and real devices.
 
 ### E2E and keystore
 
