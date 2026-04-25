@@ -16,8 +16,11 @@ jobs:
           flutter-version: '3.41.7'
           channel: 'stable'
       - run: flutter pub get
+      - name: Accept Android licenses
+        run: yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --licenses || true
       - run: flutter build apk --release
       - uses: actions/upload-artifact@v4
         with:
           name: marchat-flutter-apk
           path: build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 1
