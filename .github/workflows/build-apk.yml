@@ -13,7 +13,7 @@ jobs:
           distribution: 'temurin'
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.29.3'
+          flutter-version: '3.41.7'
           channel: 'stable'
       - run: flutter pub get
       - run: flutter build apk --release
