@@ -93,6 +93,8 @@ flutter:
 flutter_launcher_icons:
   image_path: assets/branding/marchat-transparent.png
   android: true
+  adaptive_icon_background: "#121212"
+  adaptive_icon_foreground: assets/branding/marchat-transparent.png
   ios: true
   web:
     generate: true

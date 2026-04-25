@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Keep generous transparent padding so Android 12 mask does not crop the artwork -->
+    <item
+        android:bottom="72dp"
+        android:left="72dp"
+        android:right="72dp"
+        android:top="72dp">
+        <bitmap
+            android:antialias="true"
+            android:filter="true"
+            android:gravity="center"
+            android:src="@drawable/ic_launcher_foreground" />
+    </item>
+</layer-list>
