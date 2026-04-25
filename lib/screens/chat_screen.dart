@@ -84,6 +84,7 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _suppressDisconnectUi = false;
   bool _connected = false;
   Timer? _reconnectTimer;
+  Timer? _typingTicker;
   Duration _reconnectDelay = const Duration(seconds: 1);
 
   final _input = TextEditingController();
@@ -116,6 +117,11 @@ class _ChatScreenState extends State<ChatScreen> {
   String? _activeDmKey;
   final Map<String, int> _dmUnreadByKey = {};
   final Map<String, String> _dmDisplayByKey = {};
+  final Map<String, DateTime> _typingUsers = {};
+  final Map<String, bool> _typingScopeDm = {};
+  final Map<String, String> _typingChannel = {};
+  static const Duration _typingTimeout = Duration(seconds: 3);
+  DateTime _lastTypingSent = DateTime.fromMillisecondsSinceEpoch(0);
 
   bool _showMsgMeta = false;
 
@@ -145,6 +151,11 @@ class _ChatScreenState extends State<ChatScreen> {
     final tid = widget.config.chatThemeId.toLowerCase();
     final idx = kMcBuiltinChatThemes.indexWhere((e) => e.id == tid);
     _themeIndex = idx >= 0 ? idx : 3;
+    _typingTicker = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      if (_typingUsers.isEmpty) return;
+      setState(() {});
+    });
     _connect();
   }
 
@@ -188,6 +199,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void dispose() {
     _suppressDisconnectUi = true;
     _reconnectTimer?.cancel();
+    _typingTicker?.cancel();
     _bannerTimer?.cancel();
     final sub = _socketSub;
     _socketSub = null;
@@ -369,7 +381,21 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _handleChatEnvelope(ChatWireMessage m) async {
-    if (m.type == WireTypes.typing || m.type == WireTypes.readReceipt) {
+    if (m.type == WireTypes.typing) {
+      if (m.sender.trim().isNotEmpty) {
+        final sender = m.sender.trim();
+        if (sender.toLowerCase() != widget.config.username.toLowerCase()) {
+          if (!mounted) return;
+          setState(() {
+            _typingUsers[sender] = DateTime.now();
+            _typingScopeDm[sender] = m.recipient.trim().isNotEmpty;
+            _typingChannel[sender] = _normalizeChannel(m.channel);
+          });
+        }
+      }
+      return;
+    }
+    if (m.type == WireTypes.readReceipt) {
       return;
     }
 
@@ -459,6 +485,9 @@ class _ChatScreenState extends State<ChatScreen> {
 
     if (!mounted) return;
     setState(() {
+      _typingUsers.remove(msg.sender);
+      _typingScopeDm.remove(msg.sender);
+      _typingChannel.remove(msg.sender);
       _messages.add(msg);
       if (_messages.length > _kMaxTranscriptMessages) {
         final dropped = _messages.removeAt(0);
@@ -481,6 +510,12 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   String _dmKey(String username) => username.toLowerCase();
+
+  String _normalizeChannel(String channel) {
+    final normalized = channel.trim().toLowerCase();
+    if (normalized.isEmpty) return 'general';
+    return normalized;
+  }
 
   String? _dmPeer(ChatWireMessage m) {
     if (m.type != WireTypes.dm) return null;
@@ -530,11 +565,48 @@ class _ChatScreenState extends State<ChatScreen> {
 
   List<ChatWireMessage> _visibleMessages() {
     if (_activeDmKey == null) {
-      return _messages.where((m) => m.type != WireTypes.dm).toList();
+      final activeChannel = _normalizeChannel(_activeChannel);
+      return _messages.where((m) {
+        if (m.type == WireTypes.dm) return false;
+        return _normalizeChannel(m.channel) == activeChannel;
+      }).toList();
     }
     return _messages
         .where((m) => _dmKey(_dmPeer(m) ?? '') == _activeDmKey)
         .toList();
+  }
+
+  List<String> _activeTypers() {
+    final now = DateTime.now();
+    final activeDm = _activeDmKey;
+    final activeChannel = _normalizeChannel(_activeChannel);
+    final me = widget.config.username.trim().toLowerCase();
+    final active = <String>[];
+    final stale = <String>[];
+    _typingUsers.forEach((user, ts) {
+      if (now.difference(ts) >= _typingTimeout) {
+        stale.add(user);
+        return;
+      }
+      final key = user.trim().toLowerCase();
+      if (key.isEmpty || key == me) return;
+      final isDmScope = _typingScopeDm[user] ?? false;
+      if (isDmScope) {
+        if (activeDm == null || key != activeDm) return;
+      } else {
+        if (activeDm != null) return;
+        final typingCh = _normalizeChannel(_typingChannel[user] ?? '');
+        if (typingCh != activeChannel) return;
+      }
+      active.add(user);
+    });
+    for (final user in stale) {
+      _typingUsers.remove(user);
+      _typingScopeDm.remove(user);
+      _typingChannel.remove(user);
+    }
+    active.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    return active;
   }
 
   // ── Notifications (TUI-aligned) ─────────────────────────────────────────
@@ -649,6 +721,26 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _sendWire(ChatWireMessage m) async {
     await _sendJson(m.toJson());
+  }
+
+  Future<void> _sendTypingIndicator() async {
+    if (_ch == null) return;
+    if (_input.text.trim().isEmpty) return;
+    final now = DateTime.now();
+    if (now.difference(_lastTypingSent) < const Duration(seconds: 2)) return;
+    _lastTypingSent = now;
+    await _sendWire(
+      ChatWireMessage(
+        sender: widget.config.username,
+        content: '',
+        createdAt: now,
+        type: WireTypes.typing,
+        recipient: _activeDmKey == null
+            ? ''
+            : (_dmDisplayByKey[_activeDmKey!] ?? _activeDmKey!),
+        channel: _activeDmKey == null ? _normalizeChannel(_activeChannel) : '',
+      ),
+    );
   }
 
   Duration? _parseFocusDuration(String? s) {
@@ -1122,10 +1214,15 @@ class _ChatScreenState extends State<ChatScreen> {
           widget.config.username,
           text,
         );
-        await _sendWire(enc);
+        await _sendWire(
+          enc.copyWith(channel: _normalizeChannel(_activeChannel)),
+        );
       } else {
         await _sendWire(
-          ChatWireMessage.plainText(widget.config.username, text),
+          ChatWireMessage.plainText(
+            widget.config.username,
+            text,
+          ).copyWith(channel: _normalizeChannel(_activeChannel)),
         );
       }
     } catch (e) {
@@ -1174,6 +1271,12 @@ class _ChatScreenState extends State<ChatScreen> {
           createdAt: DateTime.now(),
           type: WireTypes.file,
           encrypted: encFile,
+          channel: _activeDmKey == null
+              ? _normalizeChannel(_activeChannel)
+              : '',
+          recipient: _activeDmKey == null
+              ? ''
+              : (_dmDisplayByKey[_activeDmKey!] ?? _activeDmKey!),
           file: WireFileMeta(
             filename: name,
             size: wireBytes.length,
@@ -1887,6 +1990,7 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   Widget build(BuildContext context) {
     final visibleMessages = _visibleMessages();
+    final typers = _activeTypers();
     final compact = MediaQuery.of(context).size.width < 800;
     return CallbackShortcuts(
       bindings: {
@@ -1968,6 +2072,23 @@ class _ChatScreenState extends State<ChatScreen> {
                         ],
                       ),
                     ),
+                    if (typers.isNotEmpty)
+                      Container(
+                        width: double.infinity,
+                        color: t.sidebarBg,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 3,
+                        ),
+                        child: Text(
+                          '${typers.join(', ')} typing...',
+                          style: TextStyle(
+                            color: t.timeFg,
+                            fontFamily: 'monospace',
+                            fontSize: 11,
+                          ),
+                        ),
+                      ),
                     _inputBar(compact: compact),
                   ],
                 ),
@@ -2045,6 +2166,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   ),
                 ),
                 onSubmitted: (_) => _submitInput(),
+                onChanged: (_) => unawaited(_sendTypingIndicator()),
               ),
             ),
             const SizedBox(width: 6),

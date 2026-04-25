@@ -20,6 +20,7 @@ This is an optional graphical client for the main [marchat](https://github.com/C
 ## Features
 
 - Real-time messaging over WebSocket (string message types, admin commands, channels, DMs, structured commands aligned with the TUI)
+- Channel messages persist channel metadata on the wire and the transcript shows only the active channel when not in a DM thread
 - Direct messages use `:dm <user> <message>` and the left sidebar lists DM threads with unread counts
 - Reactions (`type: reaction` with `reaction.target_id` / `emoji` / `is_removal`) update the transcript in place and render under the target message like the Go TUI
 - Optional global E2E: ChaCha20-Poly1305 on the wire, compatible with `shared.EncryptTextMessage` / `MARCHAT_GLOBAL_E2E_KEY`. In chat, plain text **`E2E on`** (theme-tinted) appears in the header next to the socket dot when a key is loaded and the socket is up; the left status strip still shows **`Connected (E2E)`**. Rows that were **`encrypted` on the wire** keep that flag after decrypt and show a **`*`** after the time (`:msginfo` adds `#id, enc`), matching the Go client's metadata idea.
@@ -150,6 +151,7 @@ Use in-app help (Ctrl+H) and the marchat TUI help for the full command set.
 - When a DM thread is selected, composer sends go to that user as DMs.
 - When no DM thread is selected, composer sends go to the normal channel chat.
 - Click a DM user in the sidebar to view that DM thread and clear its unread count.
+- Typing indicators are scoped by active view: DM typing appears only in that DM thread, and channel typing appears only in the active channel view.
 
 ## License
 
