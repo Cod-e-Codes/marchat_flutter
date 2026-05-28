@@ -67,6 +67,10 @@ updated-dependencies:
 Signed-off-by: dependabot[bot] <support@github.com> ([dependabot[bot]](https://github.com/dependabot[bot]))
 
 
+### Miscellaneous
+- **ci:** Fix action-gh-release version comment after Dependabot bump ([Cod-e-Codes](https://github.com/Cod-e-Codes))
+
+
 ## 1.2.0 - 2026-05-28
 
 **marchat server line:** 1.2.0 (use a matching or newer marchat server build for full compatibility).
