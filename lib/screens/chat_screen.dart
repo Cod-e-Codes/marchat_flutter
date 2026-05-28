@@ -19,6 +19,7 @@ import '../wire_message.dart';
 
 const int _kMaxTranscriptMessages = 2000;
 const Duration _kReconnectMax = Duration(seconds: 30);
+const Duration _kReadReceiptDebounce = Duration(milliseconds: 750);
 
 const String _pref24h = 'marchat_chat_twenty_four_hour';
 const String _prefTheme = 'marchat_chat_theme_id';
@@ -123,6 +124,9 @@ class _ChatScreenState extends State<ChatScreen> {
   static const Duration _typingTimeout = Duration(seconds: 3);
   DateTime _lastTypingSent = DateTime.fromMillisecondsSinceEpoch(0);
 
+  int _lastReadReceiptSentId = 0;
+  Timer? _readReceiptTimer;
+
   bool _showMsgMeta = false;
 
   late final String _helpBodyText;
@@ -156,6 +160,7 @@ class _ChatScreenState extends State<ChatScreen> {
       if (_typingUsers.isEmpty) return;
       setState(() {});
     });
+    _scroll.addListener(_onScrollForReadReceipt);
     _connect();
   }
 
@@ -200,6 +205,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _suppressDisconnectUi = true;
     _reconnectTimer?.cancel();
     _typingTicker?.cancel();
+    _readReceiptTimer?.cancel();
     _bannerTimer?.cancel();
     final sub = _socketSub;
     _socketSub = null;
@@ -208,6 +214,7 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     _ch?.sink.close();
     _ch = null;
+    _scroll.removeListener(_onScrollForReadReceipt);
     _input.dispose();
     _scroll.dispose();
     _inputFocus.dispose();
@@ -339,10 +346,7 @@ class _ChatScreenState extends State<ChatScreen> {
       if (data is! Map<String, dynamic>) return;
 
       if (!_connected && mounted) {
-        setState(() {
-          _connected = true;
-          _statusLine = widget.e2e != null ? 'Connected (E2E)' : 'Connected';
-        });
+        _onFirstConnect();
       }
 
       if (data['sender'] != null && (data['sender'] as String).isNotEmpty) {
@@ -506,7 +510,116 @@ class _ChatScreenState extends State<ChatScreen> {
           curve: Curves.easeOut,
         );
       }
+      _scheduleReadReceiptFlush();
     });
+  }
+
+  /// Server replays history on each handshake; drop local transcript so we do
+  /// not duplicate messages after a disconnect (matches Go TUI on wsConnected).
+  void _onFirstConnect() {
+    setState(() {
+      _connected = true;
+      _reconnectDelay = const Duration(seconds: 1);
+      _lastReadReceiptSentId = 0;
+      _readReceiptTimer?.cancel();
+      _readReceiptTimer = null;
+      _messages.clear();
+      _reactionsByTarget.clear();
+      _typingUsers.clear();
+      _typingScopeDm.clear();
+      _typingChannel.clear();
+      _receivedFiles.clear();
+      _statusLine = widget.e2e != null ? 'Connected (E2E)' : 'Connected';
+    });
+  }
+
+  bool _scrollAtBottom() {
+    if (!_scroll.hasClients) return false;
+    final pos = _scroll.position;
+    return pos.maxScrollExtent - pos.pixels <= 48;
+  }
+
+  int _maxMessageId() {
+    var max = 0;
+    for (final m in _messages) {
+      if (m.messageId > max) max = m.messageId;
+    }
+    return max;
+  }
+
+  void _onScrollForReadReceipt() {
+    if (_scrollAtBottom()) _scheduleReadReceiptFlush();
+  }
+
+  void _scheduleReadReceiptFlush() {
+    if (!_connected || _ch == null || !_scrollAtBottom()) return;
+    final maxId = _maxMessageId();
+    if (maxId == 0 || maxId <= _lastReadReceiptSentId) return;
+    _readReceiptTimer?.cancel();
+    _readReceiptTimer = Timer(_kReadReceiptDebounce, () {
+      unawaited(_flushReadReceipt());
+    });
+  }
+
+  Future<void> _flushReadReceipt() async {
+    _readReceiptTimer = null;
+    if (!_connected || _ch == null || !_scrollAtBottom()) return;
+    final maxId = _maxMessageId();
+    if (maxId == 0 || maxId <= _lastReadReceiptSentId) return;
+    try {
+      await _sendWire(
+        ChatWireMessage(
+          sender: widget.config.username,
+          content: '',
+          createdAt: DateTime.now(),
+          type: WireTypes.readReceipt,
+          messageId: maxId,
+        ),
+      );
+      _lastReadReceiptSentId = maxId;
+      _scheduleReadReceiptFlush();
+    } catch (e) {
+      _toast('[ERROR] Read receipt: $e');
+    }
+  }
+
+  Future<void> _sendDirectMessage(String recipient, String body) async {
+    if (widget.e2e != null) {
+      final enc = await widget.e2e!.encryptOutgoingText(
+        widget.config.username,
+        body,
+        outerType: WireTypes.dm,
+        recipient: recipient,
+      );
+      await _sendWire(enc);
+      return;
+    }
+    await _sendWire(
+      ChatWireMessage(
+        sender: widget.config.username,
+        content: body,
+        createdAt: DateTime.now(),
+        type: WireTypes.dm,
+        recipient: recipient,
+      ),
+    );
+  }
+
+  Future<void> _sendChannelText(String text) async {
+    if (widget.e2e != null) {
+      final enc = await widget.e2e!.encryptOutgoingText(
+        widget.config.username,
+        text,
+      );
+      await _sendWire(enc.copyWith(channel: _normalizeChannel(_activeChannel)));
+      return;
+    }
+    await _sendWire(
+      ChatWireMessage.plainText(
+        widget.config.username,
+        text,
+      ).copyWith(channel: _normalizeChannel(_activeChannel)),
+    );
   }
 
   String _dmKey(String username) => username.toLowerCase();
@@ -1006,15 +1119,7 @@ class _ChatScreenState extends State<ChatScreen> {
       final target = parts[1];
       final body = parts.sublist(2).join(' ');
       final key = _dmKey(target);
-      await _sendWire(
-        ChatWireMessage(
-          sender: widget.config.username,
-          content: body,
-          createdAt: DateTime.now(),
-          type: WireTypes.dm,
-          recipient: target,
-        ),
-      );
+      await _sendDirectMessage(target, body);
       setState(() {
         _dmDisplayByKey[key] = target;
         _activeDmKey = key;
@@ -1200,30 +1305,9 @@ class _ChatScreenState extends State<ChatScreen> {
     try {
       if (_activeDmKey != null) {
         final recipient = _dmDisplayByKey[_activeDmKey!] ?? _activeDmKey!;
-        await _sendWire(
-          ChatWireMessage(
-            sender: widget.config.username,
-            content: text,
-            createdAt: DateTime.now(),
-            type: WireTypes.dm,
-            recipient: recipient,
-          ),
-        );
-      } else if (widget.e2e != null) {
-        final enc = await widget.e2e!.encryptOutgoingText(
-          widget.config.username,
-          text,
-        );
-        await _sendWire(
-          enc.copyWith(channel: _normalizeChannel(_activeChannel)),
-        );
+        await _sendDirectMessage(recipient, text);
       } else {
-        await _sendWire(
-          ChatWireMessage.plainText(
-            widget.config.username,
-            text,
-          ).copyWith(channel: _normalizeChannel(_activeChannel)),
-        );
+        await _sendChannelText(text);
       }
     } catch (e) {
       _toast('[ERROR] Send failed: $e');

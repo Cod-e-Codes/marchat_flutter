@@ -37,10 +37,15 @@ class MarchatGlobalE2E {
     }
   }
 
+  /// Encrypts [plainText] for the wire. Inner JSON always uses `type: text`
+  /// (matches Go `shared.EncryptTextMessage`). [outerType] / [recipient] set the
+  /// outer envelope (e.g. `dm` + peer for direct messages).
   Future<ChatWireMessage> encryptOutgoingText(
     String sender,
-    String plainText,
-  ) async {
+    String plainText, {
+    String outerType = WireTypes.text,
+    String recipient = '',
+  }) async {
     final createdUtc = DateTime.now().toUtc();
     final innerMap = <String, dynamic>{
       'sender': sender,
@@ -55,8 +60,9 @@ class MarchatGlobalE2E {
       sender: sender,
       content: base64Encode(packed),
       createdAt: createdUtc,
-      type: WireTypes.text,
+      type: outerType,
       encrypted: true,
+      recipient: recipient,
     );
   }
 

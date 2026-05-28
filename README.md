@@ -23,7 +23,9 @@ This is an optional graphical client for the main [marchat](https://github.com/C
 - Channel messages persist channel metadata on the wire and the transcript shows only the active channel when not in a DM thread
 - Direct messages use `:dm <user> <message>` and the left sidebar lists DM threads with unread counts
 - Reactions (`type: reaction` with `reaction.target_id` / `emoji` / `is_removal`) update the transcript in place and render under the target message like the Go TUI
-- Optional global E2E: ChaCha20-Poly1305 on the wire, compatible with `shared.EncryptTextMessage` / `MARCHAT_GLOBAL_E2E_KEY`. In chat, plain text **`E2E on`** (theme-tinted) appears in the header next to the socket dot when a key is loaded and the socket is up; the left status strip still shows **`Connected (E2E)`**. Rows that were **`encrypted` on the wire** keep that flag after decrypt and show a **`*`** after the time (`:msginfo` adds `#id, enc`), matching the Go client's metadata idea.
+- Optional global E2E: ChaCha20-Poly1305 on the wire, compatible with `shared.EncryptTextMessage` / `MARCHAT_GLOBAL_E2E_KEY`. Applies to channel chat, direct messages, edits, and file payloads when a key is loaded. In chat, plain text **`E2E on`** (theme-tinted) appears in the header next to the socket dot when a key is loaded and the socket is up; the left status strip still shows **`Connected (E2E)`**. Rows that were **`encrypted` on the wire** keep that flag after decrypt and show a **`*`** after the time (`:msginfo` adds `#id, enc`), matching the Go client's metadata idea.
+- On reconnect, the transcript is cleared before server history replay so messages are not duplicated (same as the Go TUI).
+- Read receipts are sent (debounced) when the message list is scrolled to the bottom.
 - Chat composer: **Enter** sends, **Shift+Enter** starts a new line; **12-hour** times stay on one line in a wider time column; the header shows **Connected** / **Disconnected** next to the socket indicator.
 - Unlock existing `keystore.dat` with the same passphrase and format as `client/crypto/keystore.go` (v3 portable header or legacy path-salt)
 - File send and save
@@ -148,7 +150,7 @@ Use in-app help (Ctrl+H) and the marchat TUI help for the full command set.
 - There is no DM send toggle mode in the composer.
 - The left sidebar shows users who have sent DMs to you or received DMs from you.
 - DM messages are not shown in the default channel timeline.
-- When a DM thread is selected, composer sends go to that user as DMs.
+- When a DM thread is selected, composer sends go to that user as DMs (encrypted on the wire when E2E is enabled, including code snippets from `:code`).
 - When no DM thread is selected, composer sends go to the normal channel chat.
 - Click a DM user in the sidebar to view that DM thread and clear its unread count.
 - Typing indicators are scoped by active view: DM typing appears only in that DM thread, and channel typing appears only in the active channel view.
