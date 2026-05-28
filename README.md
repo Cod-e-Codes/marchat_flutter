@@ -35,7 +35,7 @@ This is an optional graphical client for the main [marchat](https://github.com/C
 
 ## Requirements
 
-- Flutter stable in the 3.41.x line (tested with 3.41.7) and Dart 3.11.x as bundled with that SDK
+- Flutter stable in the 3.44.x line (tested with 3.44.0) and Dart 3.12.x as bundled with that SDK
 - Dart SDK constraint for this package: see `pubspec.yaml` (`>=3.8.0 <4.0.0`)
 - Git for Windows (or Git on your PATH) if you clone with Git
 - **Windows desktop builds:** plugin builds need symlink support. Turn on **Developer Mode** in Windows Settings (Privacy and security, For developers), or run the build from an elevated shell. See Flutter Windows setup docs if `flutter build windows` fails with a symlink message.
