@@ -18,6 +18,53 @@ Pin GitHub Actions to SHAs, scope contents:write to changelog/publish jobs,
 validate release tags on workflow_dispatch, and add Dependabot for actions.
 Add debug network_security_config with user CAs for wss dev; release APK
 keeps system CAs only. Document TLS behavior and workflow security in README. ([Cod-e-Codes](https://github.com/Cod-e-Codes))
+- Bump the github-actions group with 4 updates
+
+Bumps the github-actions group with 4 updates: [subosito/flutter-action](https://github.com/subosito/flutter-action), [actions/upload-artifact](https://github.com/actions/upload-artifact), [actions/download-artifact](https://github.com/actions/download-artifact) and [softprops/action-gh-release](https://github.com/softprops/action-gh-release).
+
+
+Updates `subosito/flutter-action` from 2.21.0 to 2.23.0
+- [Release notes](https://github.com/subosito/flutter-action/releases)
+- [Commits](https://github.com/subosito/flutter-action/compare/fd55f4c5af5b953cc57a2be44cb082c8f6635e8e...1a449444c387b1966244ae4d4f8c696479add0b2)
+
+Updates `actions/upload-artifact` from 4.6.2 to 7.0.1
+- [Release notes](https://github.com/actions/upload-artifact/releases)
+- [Commits](https://github.com/actions/upload-artifact/compare/ea165f8d65b6e75b540449e92b4886f43607fa02...043fb46d1a93c77aae656e7c1c64a875d1fc6a0a)
+
+Updates `actions/download-artifact` from 4.3.0 to 8.0.1
+- [Release notes](https://github.com/actions/download-artifact/releases)
+- [Commits](https://github.com/actions/download-artifact/compare/d3f86a106a0bac45b974a628896c90dbdf5c8093...3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c)
+
+Updates `softprops/action-gh-release` from 2.6.2 to 3.0.0
+- [Release notes](https://github.com/softprops/action-gh-release/releases)
+- [Changelog](https://github.com/softprops/action-gh-release/blob/master/CHANGELOG.md)
+- [Commits](https://github.com/softprops/action-gh-release/compare/3bb12739c298aeb8a4eeaf626c5b8d85266b0e65...b4309332981a82ec1c5618f44dd2e27cc8bfbfda)
+
+---
+updated-dependencies:
+- dependency-name: subosito/flutter-action
+  dependency-version: 2.23.0
+  dependency-type: direct:production
+  update-type: version-update:semver-minor
+  dependency-group: github-actions
+- dependency-name: actions/upload-artifact
+  dependency-version: 7.0.1
+  dependency-type: direct:production
+  update-type: version-update:semver-major
+  dependency-group: github-actions
+- dependency-name: actions/download-artifact
+  dependency-version: 8.0.1
+  dependency-type: direct:production
+  update-type: version-update:semver-major
+  dependency-group: github-actions
+- dependency-name: softprops/action-gh-release
+  dependency-version: 3.0.0
+  dependency-type: direct:production
+  update-type: version-update:semver-major
+  dependency-group: github-actions
+...
+
+Signed-off-by: dependabot[bot] <support@github.com> ([dependabot[bot]](https://github.com/dependabot[bot]))
 
 
 ## 1.2.0 - 2026-05-28
