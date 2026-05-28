@@ -12,7 +12,7 @@ on:
         type: string
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   prepare:
@@ -27,14 +27,22 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
-          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
+          ref: ${{ github.event_name != 'workflow_dispatch' && github.ref || '' }}
 
       - name: Resolve version
         id: meta
+        env:
+          DISPATCH_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || '' }}
         run: |
           set -euo pipefail
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            TAG="${{ inputs.tag }}"
+            TAG="$DISPATCH_TAG"
+            if ! [[ "$TAG" =~ ^v[0-9][0-9A-Za-z0-9._+-]*$ ]]; then
+              echo "::error::Tag must match v<version> (example: v1.2.0)."
+              exit 1
+            fi
+            git rev-parse --verify "refs/tags/${TAG}^{commit}" >/dev/null
+            git checkout --force "$TAG"
           else
             TAG="${GITHUB_REF#refs/tags/}"
           fi
@@ -44,7 +52,7 @@ jobs:
           echo "build_number=${{ github.run_number }}" >> "$GITHUB_OUTPUT"
 
       - name: Generate release notes
-        uses: orhun/git-cliff-action@v4
+        uses: orhun/git-cliff-action@f50e11560dce63f7c33227798f90b924471a88b5 # v4
         with:
           version: v2.13.1
           config: cliff.toml
@@ -54,7 +62,7 @@ jobs:
           GITHUB_REPO: ${{ github.repository }}
 
       - name: Regenerate full changelog
-        uses: orhun/git-cliff-action@v4
+        uses: orhun/git-cliff-action@f50e11560dce63f7c33227798f90b924471a88b5 # v4
         with:
           version: v2.13.1
           config: cliff.toml
@@ -64,7 +72,7 @@ jobs:
           GITHUB_REPO: ${{ github.repository }}
 
       - name: Upload metadata artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: release-metadata
           path: |
@@ -83,13 +91,13 @@ jobs:
           ref: ${{ needs.prepare.outputs.tag }}
 
       - name: Set up Java
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.7.0
         with:
           java-version: '17'
           distribution: 'temurin'
 
       - name: Set up Flutter
-        uses: subosito/flutter-action@v2
+        uses: subosito/flutter-action@fd55f4c5af5b953cc57a2be44cb082c8f6635e8e # v2.21.0
         with:
           flutter-version: '3.44.0'
           channel: stable
@@ -102,18 +110,23 @@ jobs:
         run: yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses || true
 
       - name: Build release APK
+        env:
+          BUILD_VERSION: ${{ needs.prepare.outputs.version }}
+          BUILD_NUMBER: ${{ needs.prepare.outputs.build_number }}
         run: |
           flutter build apk --release \
-            --build-name="${{ needs.prepare.outputs.version }}" \
-            --build-number="${{ needs.prepare.outputs.build_number }}"
+            --build-name="$BUILD_VERSION" \
+            --build-number="$BUILD_NUMBER"
 
       - name: Rename APK
+        env:
+          BUILD_VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           cp build/app/outputs/flutter-apk/app-release.apk \
-            "marchat-flutter-${{ needs.prepare.outputs.version }}-android.apk"
+            "marchat-flutter-${BUILD_VERSION}-android.apk"
 
       - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: android-apk
           path: marchat-flutter-${{ needs.prepare.outputs.version }}-android.apk
@@ -130,7 +143,7 @@ jobs:
           ref: ${{ needs.prepare.outputs.tag }}
 
       - name: Set up Flutter
-        uses: subosito/flutter-action@v2
+        uses: subosito/flutter-action@fd55f4c5af5b953cc57a2be44cb082c8f6635e8e # v2.21.0
         with:
           flutter-version: '3.44.0'
           channel: stable
@@ -143,22 +156,27 @@ jobs:
         run: flutter pub get
 
       - name: Build Windows release
+        env:
+          BUILD_VERSION: ${{ needs.prepare.outputs.version }}
+          BUILD_NUMBER: ${{ needs.prepare.outputs.build_number }}
         run: |
           flutter build windows --release `
-            --build-name="${{ needs.prepare.outputs.version }}" `
-            --build-number="${{ needs.prepare.outputs.build_number }}"
+            --build-name="$env:BUILD_VERSION" `
+            --build-number="$env:BUILD_NUMBER"
 
       - name: Package Windows zip
         shell: pwsh
+        env:
+          BUILD_VERSION: ${{ needs.prepare.outputs.version }}
         run: |
-          $version = "${{ needs.prepare.outputs.version }}"
+          $version = $env:BUILD_VERSION
           $zip = "marchat-flutter-$version-windows-x64.zip"
           $src = "build\windows\x64\runner\Release"
           if (-not (Test-Path $src)) { throw "Missing $src" }
           Compress-Archive -Path "$src\*" -DestinationPath $zip -Force
 
       - name: Upload Windows artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: windows-zip
           path: marchat-flutter-${{ needs.prepare.outputs.version }}-windows-x64.zip
@@ -168,16 +186,18 @@ jobs:
     name: Publish GitHub Release
     needs: [prepare, build-android, build-windows]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Download release assets
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: '*'
           merge-multiple: true
           path: dist
 
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.2.2
         with:
           tag_name: ${{ needs.prepare.outputs.tag }}
           name: marchat_flutter ${{ needs.prepare.outputs.version }}
@@ -187,12 +207,10 @@ jobs:
             dist/marchat-flutter-${{ needs.prepare.outputs.version }}-windows-x64.zip
           draft: false
           prerelease: ${{ contains(needs.prepare.outputs.version, '-') }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Download changelog for main branch
         if: github.event_name == 'push'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: release-metadata
           path: changelog-update
@@ -206,6 +224,8 @@ jobs:
 
       - name: Commit changelog for release
         if: github.event_name == 'push'
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
         run: |
           set -euo pipefail
           cp changelog-update/CHANGELOG.md CHANGELOG.md
@@ -216,5 +236,5 @@ jobs:
             echo "No changelog changes to push."
             exit 0
           fi
-          git commit -m "chore: update changelog for ${{ needs.prepare.outputs.tag }} [skip ci]"
+          git commit -m "chore: update changelog for ${RELEASE_TAG} [skip ci]"
           git push

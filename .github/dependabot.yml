@@ -1,0 +1,11 @@
+# Keep GitHub Actions on reviewed, pinned SHAs (see workflow comments).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns:
+          - "*"

@@ -93,7 +93,9 @@ Use a **marchat server** build from the same line (for example **v1.2.0**) for f
 2. Tag and push: `git tag v1.2.0 && git push origin v1.2.0`
 3. The **Release** workflow builds the APK and Windows zip, generates release notes with [git-cliff](https://git-cliff.org), and publishes the GitHub Release.
 
-To rebuild an existing tag without changing it, run **Release** via **workflow_dispatch** and pass the tag (for example `v1.2.0`).
+To rebuild an existing tag without changing it, run **Release** via **workflow_dispatch** and pass an existing `v*` tag (for example `v1.2.0`). Only collaborators with permission to run workflows can do this; the workflow verifies the tag exists before building.
+
+Protect `main` and `v*` tags in GitHub branch/tag protection so only trusted maintainers can push code or tags that trigger these workflows.
 
 ## Build from source
 
@@ -122,8 +124,11 @@ Linux desktop builds are local only (not attached to GitHub Releases yet).
 
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
+| [CI](.github/workflows/ci.yml) | Push or PR to `main` | `flutter analyze` and `flutter test` (read-only token) |
 | [Update changelog](.github/workflows/changelog.yml) | Push to `main`, manual | Regenerate `CHANGELOG.md` from commits |
 | [Release](.github/workflows/release.yml) | Push tag `v*`, manual | Build APK + Windows zip, publish GitHub Release |
+
+Dependabot opens weekly PRs to update pinned GitHub Actions (see [.github/dependabot.yml](.github/dependabot.yml)).
 
 ## Configuration
 
@@ -142,10 +147,14 @@ adb reverse tcp:8080 tcp:8080
 
 After that, `ws://localhost:8080/ws` or `wss://localhost:8080/ws` in the app will target your host server through the reverse tunnel.
 
-### TLS note for debug Android builds
+### TLS note for Android builds
 
-In debug builds on Android, `wss://` connections currently allow untrusted/self-signed certificates for local development convenience.
-Use a properly trusted certificate chain for production builds and real devices.
+| Build | `wss://` behavior |
+|-------|-------------------|
+| **Debug** (`flutter run`) | Dart accepts any certificate when `kDebugMode` is on. The debug network security config also trusts **user-installed CAs** (`<certificates src="user"/>`), so `wss://` can work with a CA you install on the device (homelab, proxy tools). |
+| **Release** (GitHub APK, `flutter build apk --release`) | System CAs only. Use a publicly trusted certificate chain (for example Let's Encrypt behind your reverse proxy). Self-signed or user-CA `wss://` will fail. |
+
+Cleartext `ws://` to `localhost`, `127.0.0.1`, and `10.0.2.2` is allowed in all builds for local dev and the emulator.
 
 ### E2E and keystore
 
