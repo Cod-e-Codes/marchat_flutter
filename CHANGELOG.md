@@ -12,6 +12,12 @@ On **main** only; not yet published. Compare to the latest tag on [GitHub Releas
 
 
 ### Changes
+- Initial commit: marchat Flutter client ([Cod-e-Codes](https://github.com/Cod-e-Codes))
+- Create LICENSE ([Cod-e-Codes](https://github.com/Cod-e-Codes))
+- Fix Android connectivity: add INTERNET permission, network security config, and update NDK version ([Cod-e-Codes](https://github.com/Cod-e-Codes))
+- Add demo screenshot ([Cod-e-Codes](https://github.com/Cod-e-Codes))
+- Delete Screenshot_20250915_221327.jpg ([Cod-e-Codes](https://github.com/Cod-e-Codes))
+- Add demo screenshot ([Cod-e-Codes](https://github.com/Cod-e-Codes))
 - Add marchat_flutter screenshot to README ([Cod-e-Codes](https://github.com/Cod-e-Codes))
 - Remove marchat_flutter.jpg and update README with new screenshot format and enhanced feature descriptions. Adjust Dart SDK constraints in pubspec.yaml and add new dependencies. Update main.dart for improved app structure and configuration screen. Modify generated plugin files for consistency across platforms. ([Cod-e-Codes](https://github.com/Cod-e-Codes))
 - Enhance configuration options in the app by adding 24-hour clock and built-in chat theme settings. Implement persistence of these preferences using SharedPreferences. Update README to reflect new features and improve code formatting for better readability. ([Cod-e-Codes](https://github.com/Cod-e-Codes))
@@ -40,9 +46,19 @@ notes. ([Cod-e-Codes](https://github.com/Cod-e-Codes))
 - Add GitHub Actions workflow to build APK ([Cod-e-Codes](https://github.com/Cod-e-Codes))
 - Update Flutter version to 3.41.7 in build workflow ([Cod-e-Codes](https://github.com/Cod-e-Codes))
 - Add step to accept Android licenses in workflow ([Cod-e-Codes](https://github.com/Cod-e-Codes))
+- Add release automation, git-cliff changelog, and CI for v1.2.0 line
+
+Introduce Release workflow (APK + Windows zip on v* tags), Update changelog on main pushes, and CI for analyze/test. Configure git-cliff for CHANGELOG.md and GitHub Release notes. Bump app version to 1.2.0, document releases in README, and remove the manual build-apk workflow. ([Cod-e-Codes](https://github.com/Cod-e-Codes))
+
+
+### Documentation
+- Update README ([Cod-e-Codes](https://github.com/Cod-e-Codes))
+- Add license section ([Cod-e-Codes](https://github.com/Cod-e-Codes))
+- Link LICENSE in README ([Cod-e-Codes](https://github.com/Cod-e-Codes))
 
 
 ### Miscellaneous
+- Ignore metadata and coverage; untrack .metadata ([Cod-e-Codes](https://github.com/Cod-e-Codes))
 - Bump Flutter to 3.44.0 in CI and README ([Cod-e-Codes](https://github.com/Cod-e-Codes))
 - **android:** Upgrade Gradle, AGP, and Kotlin for Flutter 3.44 ([Cod-e-Codes](https://github.com/Cod-e-Codes))
 
