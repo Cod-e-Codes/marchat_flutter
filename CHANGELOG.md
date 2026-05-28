@@ -12,6 +12,20 @@ On **main** only; not yet published. Compare to the latest tag on [GitHub Releas
 
 
 ### Changes
+- Harden CI workflows and add debug-only Android user CA trust
+
+Pin GitHub Actions to SHAs, scope contents:write to changelog/publish jobs,
+validate release tags on workflow_dispatch, and add Dependabot for actions.
+Add debug network_security_config with user CAs for wss dev; release APK
+keeps system CAs only. Document TLS behavior and workflow security in README. ([Cod-e-Codes](https://github.com/Cod-e-Codes))
+
+
+## 1.2.0 - 2026-05-28
+
+**marchat server line:** 1.2.0 (use a matching or newer marchat server build for full compatibility).
+
+
+### Changes
 - Initial commit: marchat Flutter client ([Cod-e-Codes](https://github.com/Cod-e-Codes))
 - Create LICENSE ([Cod-e-Codes](https://github.com/Cod-e-Codes))
 - Fix Android connectivity: add INTERNET permission, network security config, and update NDK version ([Cod-e-Codes](https://github.com/Cod-e-Codes))
