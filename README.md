@@ -4,7 +4,7 @@
 
 Flutter desktop and multi-platform client for [marchat](https://github.com/Cod-e-Codes/marchat), a real-time chat server using WebSocket JSON and the same wire types as the official Go TUI client.
 
-**Status:** Primary GUI focus for the marchat ecosystem.
+**Status:** Primary GUI focus for the marchat ecosystem. **v1.2.x** tracks the [marchat](https://github.com/Cod-e-Codes/marchat) **v1.2.0** server line (server release expected soon; this client aligns with that protocol on `main`).
 
 ## Relationship to marchat
 
@@ -76,7 +76,26 @@ flutter run -d emulator-5554
 flutter test
 ```
 
-## Build
+## Releases
+
+Prebuilt binaries are published on **[GitHub Releases](https://github.com/Cod-e-Codes/marchat_flutter/releases)** when a `v*` tag is pushed.
+
+| Asset | File name |
+|-------|-----------|
+| Android | `marchat-flutter-<version>-android.apk` |
+| Windows x64 | `marchat-flutter-<version>-windows-x64.zip` |
+
+Use a **marchat server** build from the same line (for example **v1.2.0**) for full protocol parity. See [CHANGELOG.md](CHANGELOG.md) (auto-updated from git history).
+
+### Cutting a release (maintainers)
+
+1. Merge to `main`. The **Update changelog** workflow keeps [CHANGELOG.md](CHANGELOG.md) current (or run it manually under Actions).
+2. Tag and push: `git tag v1.2.0 && git push origin v1.2.0`
+3. The **Release** workflow builds the APK and Windows zip, generates release notes with [git-cliff](https://git-cliff.org), and publishes the GitHub Release.
+
+To rebuild an existing tag without changing it, run **Release** via **workflow_dispatch** and pass the tag (for example `v1.2.0`).
+
+## Build from source
 
 Windows:
 
@@ -96,6 +115,15 @@ Artifacts:
 
 - Windows: `build/windows/x64/runner/Release/marchat_flutter.exe`
 - Linux: `build/linux/x64/release/bundle/`
+
+Linux desktop builds are local only (not attached to GitHub Releases yet).
+
+## CI
+
+| Workflow | Trigger | Purpose |
+|----------|---------|---------|
+| [Update changelog](.github/workflows/changelog.yml) | Push to `main`, manual | Regenerate `CHANGELOG.md` from commits |
+| [Release](.github/workflows/release.yml) | Push tag `v*`, manual | Build APK + Windows zip, publish GitHub Release |
 
 ## Configuration
 

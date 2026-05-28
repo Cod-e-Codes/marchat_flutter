@@ -1,0 +1,220 @@
+# Build release artifacts and publish a GitHub Release when a v* tag is pushed.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to build and publish (e.g. v1.2.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    name: Prepare release metadata
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      version: ${{ steps.meta.outputs.version }}
+      build_number: ${{ steps.meta.outputs.build_number }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
+
+      - name: Resolve version
+        id: meta
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+          fi
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "build_number=${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+
+      - name: Generate release notes
+        uses: orhun/git-cliff-action@v4
+        with:
+          version: v2.13.1
+          config: cliff.toml
+          args: --latest --strip header
+        env:
+          OUTPUT: release-notes.md
+          GITHUB_REPO: ${{ github.repository }}
+
+      - name: Regenerate full changelog
+        uses: orhun/git-cliff-action@v4
+        with:
+          version: v2.13.1
+          config: cliff.toml
+          args: --verbose
+        env:
+          OUTPUT: CHANGELOG.md
+          GITHUB_REPO: ${{ github.repository }}
+
+      - name: Upload metadata artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-metadata
+          path: |
+            release-notes.md
+            CHANGELOG.md
+          retention-days: 7
+
+  build-android:
+    name: Build Android APK
+    needs: [prepare]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.0'
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Accept Android licenses
+        run: yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses || true
+
+      - name: Build release APK
+        run: |
+          flutter build apk --release \
+            --build-name="${{ needs.prepare.outputs.version }}" \
+            --build-number="${{ needs.prepare.outputs.build_number }}"
+
+      - name: Rename APK
+        run: |
+          cp build/app/outputs/flutter-apk/app-release.apk \
+            "marchat-flutter-${{ needs.prepare.outputs.version }}-android.apk"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: marchat-flutter-${{ needs.prepare.outputs.version }}-android.apk
+          retention-days: 7
+
+  build-windows:
+    name: Build Windows zip
+    needs: [prepare]
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.0'
+          channel: stable
+          cache: true
+
+      - name: Enable Windows desktop
+        run: flutter config --enable-windows-desktop
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build Windows release
+        run: |
+          flutter build windows --release `
+            --build-name="${{ needs.prepare.outputs.version }}" `
+            --build-number="${{ needs.prepare.outputs.build_number }}"
+
+      - name: Package Windows zip
+        shell: pwsh
+        run: |
+          $version = "${{ needs.prepare.outputs.version }}"
+          $zip = "marchat-flutter-$version-windows-x64.zip"
+          $src = "build\windows\x64\runner\Release"
+          if (-not (Test-Path $src)) { throw "Missing $src" }
+          Compress-Archive -Path "$src\*" -DestinationPath $zip -Force
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-zip
+          path: marchat-flutter-${{ needs.prepare.outputs.version }}-windows-x64.zip
+          retention-days: 7
+
+  publish:
+    name: Publish GitHub Release
+    needs: [prepare, build-android, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download release assets
+        uses: actions/download-artifact@v4
+        with:
+          pattern: '*'
+          merge-multiple: true
+          path: dist
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          name: marchat_flutter ${{ needs.prepare.outputs.version }}
+          body_path: dist/release-notes.md
+          files: |
+            dist/marchat-flutter-${{ needs.prepare.outputs.version }}-android.apk
+            dist/marchat-flutter-${{ needs.prepare.outputs.version }}-windows-x64.zip
+          draft: false
+          prerelease: ${{ contains(needs.prepare.outputs.version, '-') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download changelog for main branch
+        if: github.event_name == 'push'
+        uses: actions/download-artifact@v4
+        with:
+          name: release-metadata
+          path: changelog-update
+
+      - name: Update CHANGELOG on main
+        if: github.event_name == 'push'
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Commit changelog for release
+        if: github.event_name == 'push'
+        run: |
+          set -euo pipefail
+          cp changelog-update/CHANGELOG.md CHANGELOG.md
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add CHANGELOG.md
+          if git diff --cached --quiet; then
+            echo "No changelog changes to push."
+            exit 0
+          fi
+          git commit -m "chore: update changelog for ${{ needs.prepare.outputs.tag }} [skip ci]"
+          git push
