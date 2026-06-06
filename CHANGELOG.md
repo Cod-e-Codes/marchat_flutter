@@ -65,6 +65,26 @@ updated-dependencies:
 ...
 
 Signed-off-by: dependabot[bot] <support@github.com> ([dependabot[bot]](https://github.com/dependabot[bot]))
+- Bump actions/checkout from 6.0.2 to 6.0.3 in the github-actions group
+
+Bumps the github-actions group with 1 update: [actions/checkout](https://github.com/actions/checkout).
+
+
+Updates `actions/checkout` from 6.0.2 to 6.0.3
+- [Release notes](https://github.com/actions/checkout/releases)
+- [Changelog](https://github.com/actions/checkout/blob/main/CHANGELOG.md)
+- [Commits](https://github.com/actions/checkout/compare/de0fac2e4500dabe0009e67214ff5f5447ce83dd...df4cb1c069e1874edd31b4311f1884172cec0e10)
+
+---
+updated-dependencies:
+- dependency-name: actions/checkout
+  dependency-version: 6.0.3
+  dependency-type: direct:production
+  update-type: version-update:semver-patch
+  dependency-group: github-actions
+...
+
+Signed-off-by: dependabot[bot] <support@github.com> ([dependabot[bot]](https://github.com/dependabot[bot]))
 
 
 ### Miscellaneous
