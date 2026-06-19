@@ -85,6 +85,35 @@ updated-dependencies:
 ...
 
 Signed-off-by: dependabot[bot] <support@github.com> ([dependabot[bot]](https://github.com/dependabot[bot]))
+- Bump the github-actions group with 2 updates
+
+Bumps the github-actions group with 2 updates: [actions/checkout](https://github.com/actions/checkout) and [actions/setup-java](https://github.com/actions/setup-java).
+
+
+Updates `actions/checkout` from 6.0.3 to 7.0.0
+- [Release notes](https://github.com/actions/checkout/releases)
+- [Changelog](https://github.com/actions/checkout/blob/main/CHANGELOG.md)
+- [Commits](https://github.com/actions/checkout/compare/df4cb1c069e1874edd31b4311f1884172cec0e10...9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0)
+
+Updates `actions/setup-java` from 5.2.0 to 5.3.0
+- [Release notes](https://github.com/actions/setup-java/releases)
+- [Commits](https://github.com/actions/setup-java/compare/be666c2fcd27ec809703dec50e508c2fdc7f6654...ad2b38190b15e4d6bdf0c97fb4fca8412226d287)
+
+---
+updated-dependencies:
+- dependency-name: actions/checkout
+  dependency-version: 7.0.0
+  dependency-type: direct:production
+  update-type: version-update:semver-major
+  dependency-group: github-actions
+- dependency-name: actions/setup-java
+  dependency-version: 5.3.0
+  dependency-type: direct:production
+  update-type: version-update:semver-minor
+  dependency-group: github-actions
+...
+
+Signed-off-by: dependabot[bot] <support@github.com> ([dependabot[bot]](https://github.com/dependabot[bot]))
 
 
 ### Miscellaneous
