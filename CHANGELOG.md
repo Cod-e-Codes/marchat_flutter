@@ -114,6 +114,10 @@ updated-dependencies:
 ...
 
 Signed-off-by: dependabot[bot] <support@github.com> ([dependabot[bot]](https://github.com/dependabot[bot]))
+- Align Flutter client with marchat v1.3.6 protocol
+
+Match TUI close codes, colon-command routing, reactions, and System
+banner vs transcript. Pin GitHub Actions SHAs to verified tags. ([Cod-e-Codes](https://github.com/Cod-e-Codes))
 
 
 ### Miscellaneous
