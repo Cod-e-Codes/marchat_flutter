@@ -8,7 +8,7 @@ Release numbers track the supported [marchat](https://github.com/Cod-e-Codes/mar
 
 On **main** only; not yet published. Compare to the latest tag on [GitHub Releases](https://github.com/Cod-e-Codes/marchat_flutter/releases).
 
-**Targets marchat v1.2.0** server line (marchat v1.2.0 is scheduled for release on the server repo; this client branch aligns with that protocol work).
+**Targets marchat v1.3.6** server line (use a matching marchat server for full protocol parity).
 
 
 ### Changes

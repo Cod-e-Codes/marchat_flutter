@@ -4,7 +4,7 @@
 
 Flutter desktop and multi-platform client for [marchat](https://github.com/Cod-e-Codes/marchat), a real-time chat server using WebSocket JSON and the same wire types as the official Go TUI client.
 
-**Status:** Primary GUI focus for the marchat ecosystem. **v1.2.x** tracks the [marchat](https://github.com/Cod-e-Codes/marchat) **v1.2.0** server line (server release expected soon; this client aligns with that protocol on `main`).
+**Status:** Primary GUI focus for the marchat ecosystem. **v1.3.6** tracks the [marchat](https://github.com/Cod-e-Codes/marchat) **v1.3.6** server line.
 
 ## Relationship to marchat
 
@@ -22,16 +22,16 @@ This is an optional graphical client for the main [marchat](https://github.com/C
 - Real-time messaging over WebSocket (string message types, admin commands, channels, DMs, structured commands aligned with the TUI)
 - Channel messages persist channel metadata on the wire and the transcript shows only the active channel when not in a DM thread
 - Direct messages use `:dm <user> <message>` and the left sidebar lists DM threads with unread counts
-- Reactions (`type: reaction` with `reaction.target_id` / `emoji` / `is_removal`) update the transcript in place and render under the target message like the Go TUI
+- Reactions (`type: reaction` with `reaction.target_id` / `emoji` / `is_removal`) update the transcript in place. Aliases include `thumbsup` / `thumbsdown`; `:unreact` removes your reaction.
 - Optional global E2E: ChaCha20-Poly1305 on the wire, compatible with `shared.EncryptTextMessage` / `MARCHAT_GLOBAL_E2E_KEY`. Applies to channel chat, direct messages, edits, and file payloads when a key is loaded. In chat, plain text **`E2E on`** (theme-tinted) appears in the header next to the socket dot when a key is loaded and the socket is up; the left status strip still shows **`Connected (E2E)`**. Rows that were **`encrypted` on the wire** keep that flag after decrypt and show a **`*`** after the time (`:msginfo` adds `#id, enc`), matching the Go client's metadata idea.
 - On reconnect, the transcript is cleared before server history replay so messages are not duplicated (same as the Go TUI).
 - Read receipts are sent (debounced) when the message list is scrolled to the bottom.
 - Chat composer: **Enter** sends, **Shift+Enter** starts a new line; **12-hour** times stay on one line in a wider time column; the header shows **Connected** / **Disconnected** next to the socket indicator.
 - Unlock existing `keystore.dat` with the same passphrase and format as `client/crypto/keystore.go` (v3 portable header or legacy path-salt)
-- File send and save
+- File send and save (default 1 MiB; honors `MARCHAT_MAX_FILE_BYTES` / `MARCHAT_MAX_FILE_MB` like the TUI). Close **1009** is shown as a file-size error. Handshake **1008** / **1002** do not auto-reconnect.
 - Message list times use the device local timezone (same idea as the TUI when the server sends UTC in the JSON created_at field)
 - Built-in chat themes matching TUI order: `system`, `patriot`, `retro`, `modern` (`:theme`, `:themes`, Ctrl+T)
-- Admin commands (kick, ban, unban, allow, forcedisconnect, cleardb, backup, stats, plugin-style `:` commands to the server)
+- Admin commands (kick, ban, unban, allow, forcedisconnect, cleardb, backup, stats). Plugin-style `:` commands are sent for every user; the server checks privileges.
 
 ## Requirements
 
@@ -85,15 +85,15 @@ Prebuilt binaries are published on **[GitHub Releases](https://github.com/Cod-e-
 | Android | `marchat-flutter-<version>-android.apk` |
 | Windows x64 | `marchat-flutter-<version>-windows-x64.zip` |
 
-Use a **marchat server** build from the same line (for example **v1.2.0**) for full protocol parity. See [CHANGELOG.md](CHANGELOG.md) (auto-updated from git history).
+Use a **marchat server** build from the same line (for example **v1.3.6**) for full protocol parity. See [CHANGELOG.md](CHANGELOG.md) (auto-updated from git history).
 
 ### Cutting a release (maintainers)
 
 1. Merge to `main`. The **Update changelog** workflow keeps [CHANGELOG.md](CHANGELOG.md) current (or run it manually under Actions).
-2. Tag and push: `git tag v1.2.0 && git push origin v1.2.0`
+2. Tag and push: `git tag v1.3.6 && git push origin v1.3.6`
 3. The **Release** workflow builds the APK and Windows zip, generates release notes with [git-cliff](https://git-cliff.org), and publishes the GitHub Release.
 
-To rebuild an existing tag without changing it, run **Release** via **workflow_dispatch** and pass an existing `v*` tag (for example `v1.2.0`). Only collaborators with permission to run workflows can do this; the workflow verifies the tag exists before building.
+To rebuild an existing tag without changing it, run **Release** via **workflow_dispatch** and pass an existing `v*` tag (for example `v1.3.6`). Only collaborators with permission to run workflows can do this; the workflow verifies the tag exists before building.
 
 Protect `main` and `v*` tags in GitHub branch/tag protection so only trusted maintainers can push code or tags that trigger these workflows.
 
@@ -164,9 +164,11 @@ Cleartext `ws://` to `localhost`, `127.0.0.1`, and `10.0.2.2` is allowed in all 
 
 If E2E is enabled and none of the above apply, connect will fail until you provide a key or a valid keystore. The TUI generates a random global key on first use and writes it into `keystore.dat`; Flutter does not yet create a brand-new keystore from only a passphrase (use the TUI once, or set `MARCHAT_GLOBAL_E2E_KEY`).
 
-## Admin commands
+## Commands
 
-When connected as admin, you can send the same `:` commands as the server expects, for example:
+Plugin-style `:` lines that the GUI does not handle locally are sent as `admin_command` for every user. The server runs plugins first, then built-in admin commands, and replies with a System `text` line when a command is unknown or not permitted.
+
+When connected as admin, built-in server commands include:
 
 ```
 :cleardb

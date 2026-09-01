@@ -2,6 +2,8 @@
 final Map<String, String> kReactionAliases = {
   '+1': '👍',
   '-1': '👎',
+  'thumbsup': '👍',
+  'thumbsdown': '👎',
   'heart': '❤️',
   'laugh': '😂',
   'fire': '🔥',

@@ -108,6 +108,8 @@ class ChatWireMessage {
       sender: j['sender'] as String? ?? '',
       content: j['content'] as String? ?? '',
       createdAt: _parseTime(j['created_at']),
+      // v1.3.1+ handshake replay sets type on channel rows; keep default text
+      // when older servers omit it (Go omitempty on zero-value text).
       type: (type == null || type.isEmpty) ? WireTypes.text : type,
       encrypted: j['encrypted'] as bool? ?? false,
       messageId: messageId,

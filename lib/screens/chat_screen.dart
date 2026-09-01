@@ -13,9 +13,12 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 import '../app_config.dart';
 import '../chat_themes.dart';
 import '../mc_crypto.dart';
+import '../outbound.dart';
 import '../reaction_aliases.dart';
 import '../reaction_state.dart';
+import '../system_notices.dart';
 import '../wire_message.dart';
+import '../ws_close.dart';
 
 const int _kMaxTranscriptMessages = 2000;
 const Duration _kReconnectMax = Duration(seconds: 30);
@@ -83,6 +86,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   /// When true, socket `onDone`/`onError` must not call [setState] (e.g. [dispose] closed the sink).
   bool _suppressDisconnectUi = false;
+  bool _disconnectInProgress = false;
   bool _connected = false;
   Timer? _reconnectTimer;
   Timer? _typingTicker;
@@ -177,7 +181,13 @@ class _ChatScreenState extends State<ChatScreen> {
       )
       ..writeln(
         'With E2E loaded, the header shows E2E on next to the socket dot when connected; a * after the time means the payload was encrypted on the wire (TUI msginfo style).',
-      )
+      );
+    if (widget.e2e != null) {
+      sb.writeln(
+        'Search: :search runs on the server against stored ciphertext, not decrypted plaintext in chat.',
+      );
+    }
+    sb
       ..writeln(
         'Shortcuts: Ctrl+H help · Ctrl+T theme · Enter send · Shift+Enter new line',
       )
@@ -189,8 +199,13 @@ class _ChatScreenState extends State<ChatScreen> {
       )
       ..writeln(':quiet h h  :quiet-off  :focus [dur]  :focus-off')
       ..writeln(':dm <user> <msg>  :join  :leave  :channels')
-      ..writeln(':edit :delete :search :react :pin :pinned')
-      ..writeln(':q quit');
+      ..writeln(':edit :delete :search :react :unreact :thumbsup :thumbsdown')
+      ..writeln(':pin :pinned')
+      ..writeln(':q quit')
+      ..writeln()
+      ..writeln(
+        'Other : commands go to the server (plugins and admin). The server checks privileges.',
+      );
     if (widget.isAdmin) {
       sb
         ..writeln()
@@ -246,6 +261,7 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _connect() async {
     WebSocketChannel? newChannel;
     try {
+      _disconnectInProgress = false;
       if (mounted) {
         setState(() {
           _statusLine = 'Connecting…';
@@ -268,9 +284,9 @@ class _ChatScreenState extends State<ChatScreen> {
         _onSocketData,
         onError: (Object e, StackTrace st) {
           debugPrint('web socket stream error: $e\n$st');
-          _onDisconnect(_wsDisconnectReason(e));
+          _finishSocket(newChannel, fallback: _wsDisconnectReason(e));
         },
-        onDone: () => _onDisconnect('closed'),
+        onDone: () => _finishSocket(newChannel, fallback: 'closed'),
         cancelOnError: true,
       );
 
@@ -301,8 +317,35 @@ class _ChatScreenState extends State<ChatScreen> {
       try {
         await newChannel?.sink.close();
       } catch (_) {}
-      _onDisconnect(_wsDisconnectReason(e));
+      _finishSocket(newChannel, fallback: _wsDisconnectReason(e));
     }
+  }
+
+  WsCloseDecision _decisionFromChannel(
+    WebSocketChannel? ch, {
+    required String fallback,
+  }) {
+    if (ch is IOWebSocketChannel) {
+      final code = ch.closeCode;
+      final reason = ch.closeReason;
+      if (code != null || (reason != null && reason.trim().isNotEmpty)) {
+        return interpretWsClose(code, reason);
+      }
+    }
+    return interpretWsClose(null, fallback);
+  }
+
+  void _finishSocket(WebSocketChannel? ch, {required String fallback}) {
+    if (_disconnectInProgress) return;
+    final d = _decisionFromChannel(ch, fallback: fallback);
+    if (!_suppressDisconnectUi && mounted) {
+      if (d.fileSizeError) {
+        _toast('[ERROR] File exceeds server size limit');
+      } else if (!d.reconnect) {
+        _toast('[ERROR] ${d.statusText}', d: const Duration(seconds: 12));
+      }
+    }
+    _onDisconnect(d.statusText, reconnect: d.reconnect);
   }
 
   WebSocketChannel _connectChannel(Uri uri) {
@@ -318,7 +361,9 @@ class _ChatScreenState extends State<ChatScreen> {
     return IOWebSocketChannel.connect(uri, customClient: client);
   }
 
-  void _onDisconnect(String reason) {
+  void _onDisconnect(String reason, {bool reconnect = true}) {
+    if (_disconnectInProgress) return;
+    _disconnectInProgress = true;
     final sub = _socketSub;
     _socketSub = null;
     if (sub != null) {
@@ -329,9 +374,12 @@ class _ChatScreenState extends State<ChatScreen> {
     if (_suppressDisconnectUi || !mounted) return;
     setState(() {
       _connected = false;
-      _statusLine = 'Disconnected ($reason); retrying…';
+      _statusLine = reconnect
+          ? 'Disconnected ($reason); retrying…'
+          : 'Disconnected ($reason)';
     });
     _reconnectTimer?.cancel();
+    if (!reconnect) return;
     _reconnectTimer = Timer(_reconnectDelay, _connect);
     final next = (_reconnectDelay.inMilliseconds * 2).clamp(
       1000,
@@ -484,6 +532,19 @@ class _ChatScreenState extends State<ChatScreen> {
       _receivedFiles[k] = msg.file!;
     }
 
+    if (msg.sender == 'System') {
+      if (!isTranscriptSystemMessage(
+        sender: msg.sender,
+        content: msg.content,
+        messageId: msg.messageId,
+      )) {
+        if (!mounted) return;
+        _toast(msg.content.trim());
+        setState(() => _sending = false);
+        return;
+      }
+    }
+
     _maybeNotify(msg);
     _trackDmUnread(msg);
 
@@ -493,6 +554,18 @@ class _ChatScreenState extends State<ChatScreen> {
       _typingScopeDm.remove(msg.sender);
       _typingChannel.remove(msg.sender);
       _messages.add(msg);
+      if (widget.e2e != null &&
+          msg.sender == 'System' &&
+          shouldAppendE2eSearchHint(msg.content)) {
+        _messages.add(
+          ChatWireMessage(
+            sender: 'System',
+            content: kE2eSearchNoResultsHint,
+            createdAt: DateTime.now(),
+            channel: msg.channel,
+          ),
+        );
+      }
       if (_messages.length > _kMaxTranscriptMessages) {
         final dropped = _messages.removeAt(0);
         if (dropped.messageId != 0) {
@@ -552,6 +625,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _scheduleReadReceiptFlush() {
+    if (_showHelp) return;
     if (!_connected || _ch == null || !_scrollAtBottom()) return;
     final maxId = _maxMessageId();
     if (maxId == 0 || maxId <= _lastReadReceiptSentId) return;
@@ -563,6 +637,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _flushReadReceipt() async {
     _readReceiptTimer = null;
+    if (_showHelp) return;
     if (!_connected || _ch == null || !_scrollAtBottom()) return;
     final maxId = _maxMessageId();
     if (maxId == 0 || maxId <= _lastReadReceiptSentId) return;
@@ -574,6 +649,7 @@ class _ChatScreenState extends State<ChatScreen> {
           createdAt: DateTime.now(),
           type: WireTypes.readReceipt,
           messageId: maxId,
+          channel: _normalizeChannel(_activeChannel),
         ),
       );
       _lastReadReceiptSentId = maxId;
@@ -584,6 +660,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _sendDirectMessage(String recipient, String body) async {
+    body = stripNul(body);
     if (widget.e2e != null) {
       final enc = await widget.e2e!.encryptOutgoingText(
         widget.config.username,
@@ -606,6 +683,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _sendChannelText(String text) async {
+    text = stripNul(text);
     if (widget.e2e != null) {
       final enc = await widget.e2e!.encryptOutgoingText(
         widget.config.username,
@@ -837,6 +915,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _sendTypingIndicator() async {
+    if (_showHelp) return;
     if (_ch == null) return;
     if (_input.text.trim().isEmpty) return;
     final now = DateTime.now();
@@ -868,7 +947,7 @@ class _ChatScreenState extends State<ChatScreen> {
     return Duration(hours: hours, minutes: mins);
   }
 
-  /// Local + structured commands (mirrors marchat `client/main.go` routing).
+  /// Local commands plus structured wire types (TUI `client/main.go` routing).
   Future<bool> _handleTypedCommand(String raw) async {
     final text = raw.trim();
     if (text.isEmpty) return true;
@@ -1110,14 +1189,14 @@ class _ChatScreenState extends State<ChatScreen> {
       return true;
     }
 
-    if (text.startsWith(':dm')) {
+    if (matchesColonCommand(text, ':dm')) {
       final parts = text.split(RegExp(r'\s+'));
       if (parts.length < 3) {
         _toast('[INFO] Usage: :dm <user> <message>');
         return true;
       }
       final target = parts[1];
-      final body = parts.sublist(2).join(' ');
+      final body = stripNul(parts.sublist(2).join(' '));
       final key = _dmKey(target);
       await _sendDirectMessage(target, body);
       setState(() {
@@ -1139,7 +1218,11 @@ class _ChatScreenState extends State<ChatScreen> {
         _toast('[ERROR] Invalid message ID');
         return true;
       }
-      final newText = parts.sublist(2).join(' ');
+      final newText = stripNul(parts.sublist(2).join(' '));
+      if (widget.e2e == null && newText.trim().isEmpty) {
+        _toast('[ERROR] Empty plaintext is not sent');
+        return true;
+      }
       String content = newText;
       var enc = false;
       if (widget.e2e != null) {
@@ -1181,24 +1264,24 @@ class _ChatScreenState extends State<ChatScreen> {
       return true;
     }
 
+    if (text.startsWith(':unreact ')) {
+      await _handleReactionCommand(text, remove: true, fixedEmoji: '');
+      return true;
+    }
+    if (text.startsWith(':thumbsup ')) {
+      await _handleReactionCommand(text, remove: false, fixedEmoji: 'thumbsup');
+      return true;
+    }
+    if (text.startsWith(':thumbsdown ')) {
+      await _handleReactionCommand(
+        text,
+        remove: false,
+        fixedEmoji: 'thumbsdown',
+      );
+      return true;
+    }
     if (text.startsWith(':react ')) {
-      final parts = text.split(RegExp(r'\s+'));
-      if (parts.length < 3) {
-        _toast('[INFO] Usage: :react <message_id> <emoji>');
-        return true;
-      }
-      final id = int.tryParse(parts[1]);
-      if (id == null) {
-        _toast('[ERROR] Invalid message ID');
-        return true;
-      }
-      final emoji = resolveReactionEmoji(parts[2]);
-      await _sendJson({
-        'sender': widget.config.username,
-        'type': WireTypes.reaction,
-        'reaction': {'emoji': emoji, 'target_id': id},
-        'created_at': DateTime.now().toUtc().toIso8601String(),
-      });
+      await _handleReactionCommand(text, remove: false, fixedEmoji: '');
       return true;
     }
 
@@ -1258,6 +1341,44 @@ class _ChatScreenState extends State<ChatScreen> {
     return false;
   }
 
+  Future<void> _handleReactionCommand(
+    String text, {
+    required bool remove,
+    required String fixedEmoji,
+  }) async {
+    final parts = text.split(RegExp(r'\s+'));
+    final needParts = fixedEmoji.isEmpty ? 3 : 2;
+    if (parts.length < needParts) {
+      if (remove) {
+        _toast('[INFO] Usage: :unreact <message_id> <emoji>');
+      } else if (fixedEmoji == 'thumbsup') {
+        _toast('[INFO] Usage: :thumbsup <message_id>');
+      } else if (fixedEmoji == 'thumbsdown') {
+        _toast('[INFO] Usage: :thumbsdown <message_id>');
+      } else {
+        _toast('[INFO] Usage: :react <message_id> <emoji>');
+      }
+      return;
+    }
+    final id = int.tryParse(parts[1]);
+    if (id == null) {
+      _toast('[ERROR] Invalid message ID');
+      return;
+    }
+    final emojiInput = fixedEmoji.isEmpty ? parts[2] : fixedEmoji;
+    await _sendJson({
+      'sender': widget.config.username,
+      'type': WireTypes.reaction,
+      'channel': _normalizeChannel(_activeChannel),
+      'reaction': {
+        'emoji': resolveReactionEmoji(emojiInput),
+        'target_id': id,
+        if (remove) 'is_removal': true,
+      },
+      'created_at': DateTime.now().toUtc().toIso8601String(),
+    });
+  }
+
   String _fmtDur(Duration d) {
     final h = d.inHours;
     final m = d.inMinutes % 60;
@@ -1268,7 +1389,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _submitInput([String? line]) async {
     final raw = line ?? _input.text;
-    final text = raw.trim();
+    final text = stripNul(raw.trim());
     if (text.isEmpty) return;
 
     if (await _handleTypedCommand(text)) {
@@ -1283,20 +1404,16 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     if (text.startsWith(':')) {
-      if (widget.isAdmin) {
-        await _sendWire(
-          ChatWireMessage(
-            sender: widget.config.username,
-            content: text,
-            createdAt: DateTime.now(),
-            type: WireTypes.adminCommand,
-          ),
-        );
-        _input.clear();
-        _inputFocus.requestFocus();
-      } else {
-        _toast('[ERROR] Unknown command');
-      }
+      await _sendWire(
+        ChatWireMessage(
+          sender: widget.config.username,
+          content: text,
+          createdAt: DateTime.now(),
+          type: WireTypes.adminCommand,
+        ),
+      );
+      _input.clear();
+      _inputFocus.requestFocus();
       return;
     }
 
@@ -1337,9 +1454,9 @@ class _ChatScreenState extends State<ChatScreen> {
         name = f.name;
         bytes = f.bytes ?? await File(f.path!).readAsBytes();
       }
-      const maxBytes = 1024 * 1024;
+      final maxBytes = maxFileBytesFromEnv();
       if (bytes.length > maxBytes) {
-        _toast('[ERROR] File too large (max 1 MiB)');
+        _toast('[ERROR] File too large (max ${formatFileLimit(maxBytes)})');
         return;
       }
       Uint8List wireBytes = bytes;
@@ -1440,7 +1557,8 @@ class _ChatScreenState extends State<ChatScreen> {
           FilledButton(
             onPressed: () {
               if (code.text.isNotEmpty) {
-                final block = '```${lang.text.trim()}\n${code.text}\n```';
+                final block =
+                    '```${lang.text.trim()}\n${stripNul(code.text)}\n```';
                 Navigator.pop(ctx);
                 _submitInput(block);
               }
