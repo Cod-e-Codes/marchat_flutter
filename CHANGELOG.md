@@ -4,11 +4,9 @@ Narrative notes by release. Prebuilt APK and Windows zip: [GitHub Releases](http
 
 Release numbers track the supported [marchat](https://github.com/Cod-e-Codes/marchat) server line (wire protocol). See [PROTOCOL.md](https://github.com/Cod-e-Codes/marchat/blob/main/PROTOCOL.md).
 
-## Unreleased
+## 1.3.6 - 2026-09-01
 
-On **main** only; not yet published. Compare to the latest tag on [GitHub Releases](https://github.com/Cod-e-Codes/marchat_flutter/releases).
-
-**Targets marchat v1.3.6** server line (use a matching marchat server for full protocol parity).
+**marchat server line:** 1.3.6 (use a matching or newer marchat server build for full compatibility).
 
 
 ### Changes
