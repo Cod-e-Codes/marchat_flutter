@@ -236,6 +236,12 @@ class _ChatScreenState extends State<ChatScreen> {
     super.dispose();
   }
 
+  void _rejectIfMessageTooLarge(String content) {
+    if (!contentExceedsMessageLimit(content)) return;
+    _toast(messageTooLargeBanner());
+    throw const MessageTooLarge();
+  }
+
   void _toast(String msg, {Duration d = const Duration(seconds: 4)}) {
     _bannerTimer?.cancel();
     setState(() => _banner = msg);
@@ -661,6 +667,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _sendDirectMessage(String recipient, String body) async {
     body = stripNul(body);
+    _rejectIfMessageTooLarge(body);
     if (widget.e2e != null) {
       final enc = await widget.e2e!.encryptOutgoingText(
         widget.config.username,
@@ -668,6 +675,7 @@ class _ChatScreenState extends State<ChatScreen> {
         outerType: WireTypes.dm,
         recipient: recipient,
       );
+      _rejectIfMessageTooLarge(enc.content);
       await _sendWire(enc);
       return;
     }
@@ -684,11 +692,13 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _sendChannelText(String text) async {
     text = stripNul(text);
+    _rejectIfMessageTooLarge(text);
     if (widget.e2e != null) {
       final enc = await widget.e2e!.encryptOutgoingText(
         widget.config.username,
         text,
       );
+      _rejectIfMessageTooLarge(enc.content);
       await _sendWire(enc.copyWith(channel: _normalizeChannel(_activeChannel)));
       return;
     }
@@ -1178,6 +1188,7 @@ class _ChatScreenState extends State<ChatScreen> {
         _toast('[INFO] :search <query>');
         return true;
       }
+      _rejectIfMessageTooLarge(q);
       await _sendWire(
         ChatWireMessage(
           sender: widget.config.username,
@@ -1223,6 +1234,7 @@ class _ChatScreenState extends State<ChatScreen> {
         _toast('[ERROR] Empty plaintext is not sent');
         return true;
       }
+      _rejectIfMessageTooLarge(newText);
       String content = newText;
       var enc = false;
       if (widget.e2e != null) {
@@ -1233,10 +1245,13 @@ class _ChatScreenState extends State<ChatScreen> {
           );
           content = w.content;
           enc = true;
+        } on MessageTooLarge {
+          rethrow;
         } catch (e) {
           _toast('[ERROR] Encrypt edit: $e');
           return true;
         }
+        _rejectIfMessageTooLarge(content);
       }
       await _sendJson({
         'sender': widget.config.username,
@@ -1392,47 +1407,54 @@ class _ChatScreenState extends State<ChatScreen> {
     final text = stripNul(raw.trim());
     if (text.isEmpty) return;
 
-    if (await _handleTypedCommand(text)) {
-      _input.clear();
-      _inputFocus.requestFocus();
-      return;
-    }
-
-    if (_ch == null) {
-      _toast('[ERROR] Not connected');
-      return;
-    }
-
-    if (text.startsWith(':')) {
-      await _sendWire(
-        ChatWireMessage(
-          sender: widget.config.username,
-          content: text,
-          createdAt: DateTime.now(),
-          type: WireTypes.adminCommand,
-        ),
-      );
-      _input.clear();
-      _inputFocus.requestFocus();
-      return;
-    }
-
-    setState(() => _sending = true);
-
     try {
-      if (_activeDmKey != null) {
-        final recipient = _dmDisplayByKey[_activeDmKey!] ?? _activeDmKey!;
-        await _sendDirectMessage(recipient, text);
-      } else {
-        await _sendChannelText(text);
+      if (await _handleTypedCommand(text)) {
+        _input.clear();
+        _inputFocus.requestFocus();
+        return;
       }
-    } catch (e) {
-      _toast('[ERROR] Send failed: $e');
-    }
 
-    _input.clear();
-    _inputFocus.requestFocus();
-    setState(() => _sending = false);
+      if (_ch == null) {
+        _toast('[ERROR] Not connected');
+        return;
+      }
+
+      if (text.startsWith(':')) {
+        _rejectIfMessageTooLarge(text);
+        await _sendWire(
+          ChatWireMessage(
+            sender: widget.config.username,
+            content: text,
+            createdAt: DateTime.now(),
+            type: WireTypes.adminCommand,
+          ),
+        );
+        _input.clear();
+        _inputFocus.requestFocus();
+        return;
+      }
+
+      setState(() => _sending = true);
+
+      try {
+        if (_activeDmKey != null) {
+          final recipient = _dmDisplayByKey[_activeDmKey!] ?? _activeDmKey!;
+          await _sendDirectMessage(recipient, text);
+        } else {
+          await _sendChannelText(text);
+        }
+      } on MessageTooLarge {
+        rethrow;
+      } catch (e) {
+        _toast('[ERROR] Send failed: $e');
+      }
+
+      _input.clear();
+      _inputFocus.requestFocus();
+      setState(() => _sending = false);
+    } on MessageTooLarge {
+      if (mounted) setState(() => _sending = false);
+    }
   }
 
   Future<void> _sendFile(String? pathOrNull) async {

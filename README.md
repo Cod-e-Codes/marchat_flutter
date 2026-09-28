@@ -4,7 +4,7 @@
 
 Flutter desktop and multi-platform client for [marchat](https://github.com/Cod-e-Codes/marchat), a real-time chat server using WebSocket JSON and the same wire types as the official Go TUI client.
 
-**Status:** Primary GUI focus for the marchat ecosystem. **v1.3.6** tracks the [marchat](https://github.com/Cod-e-Codes/marchat) **v1.3.6** server line.
+**Status:** Primary GUI focus for the marchat ecosystem. **v1.3.8** tracks the [marchat](https://github.com/Cod-e-Codes/marchat) **v1.3.8** server line.
 
 ## Relationship to marchat
 
@@ -29,6 +29,7 @@ This is an optional graphical client for the main [marchat](https://github.com/C
 - Chat composer: **Enter** sends, **Shift+Enter** starts a new line; **12-hour** times stay on one line in a wider time column; the header shows **Connected** / **Disconnected** next to the socket indicator.
 - Unlock existing `keystore.dat` with the same passphrase and format as `client/crypto/keystore.go` (v3 portable header or legacy path-salt)
 - File send and save (default 1 MiB; honors `MARCHAT_MAX_FILE_BYTES` / `MARCHAT_MAX_FILE_MB` like the TUI). Close **1009** is shown as a file-size error. Handshake **1008** / **1002** do not auto-reconnect.
+- Chat `content` (channel text, DMs, edits, search, and `:` commands) is capped separately from files. Default **32 KiB** UTF-8 bytes (`MARCHAT_MAX_MESSAGE_BYTES`, else `MARCHAT_MAX_MESSAGE_MB`). A body equal to the cap is allowed. E2E checks plaintext and the ciphertext. Oversized text stays in the composer and shows the TUI banner. The connection stays open.
 - Message list times use the device local timezone (same idea as the TUI when the server sends UTC in the JSON created_at field)
 - Built-in chat themes matching TUI order: `system`, `patriot`, `retro`, `modern` (`:theme`, `:themes`, Ctrl+T)
 - Admin commands (kick, ban, unban, allow, forcedisconnect, cleardb, backup, stats). Plugin-style `:` commands are sent for every user; the server checks privileges.
@@ -85,15 +86,15 @@ Prebuilt binaries are published on **[GitHub Releases](https://github.com/Cod-e-
 | Android | `marchat-flutter-<version>-android.apk` |
 | Windows x64 | `marchat-flutter-<version>-windows-x64.zip` |
 
-Use a **marchat server** build from the same line (for example **v1.3.6**) for full protocol parity. See [CHANGELOG.md](CHANGELOG.md) (auto-updated from git history).
+Use a **marchat server** build from the same line (for example **v1.3.8**) for full protocol parity. See [CHANGELOG.md](CHANGELOG.md) (auto-updated from git history).
 
 ### Cutting a release (maintainers)
 
 1. Merge to `main`. The **Update changelog** workflow keeps [CHANGELOG.md](CHANGELOG.md) current (or run it manually under Actions).
-2. Tag and push: `git tag v1.3.6 && git push origin v1.3.6`
+2. Tag and push: `git tag v1.3.8 && git push origin v1.3.8`
 3. The **Release** workflow builds the APK and Windows zip, generates release notes with [git-cliff](https://git-cliff.org), and publishes the GitHub Release.
 
-To rebuild an existing tag without changing it, run **Release** via **workflow_dispatch** and pass an existing `v*` tag (for example `v1.3.6`). Only collaborators with permission to run workflows can do this; the workflow verifies the tag exists before building.
+To rebuild an existing tag without changing it, run **Release** via **workflow_dispatch** and pass an existing `v*` tag (for example `v1.3.8`). Only collaborators with permission to run workflows can do this; the workflow verifies the tag exists before building.
 
 Protect `main` and `v*` tags in GitHub branch/tag protection so only trusted maintainers can push code or tags that trigger these workflows.
 
