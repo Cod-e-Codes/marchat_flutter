@@ -4,6 +4,19 @@ Narrative notes by release. Prebuilt APK and Windows zip: [GitHub Releases](http
 
 Release numbers track the supported [marchat](https://github.com/Cod-e-Codes/marchat) server line (wire protocol). See [PROTOCOL.md](https://github.com/Cod-e-Codes/marchat/blob/main/PROTOCOL.md).
 
+## Unreleased
+
+On **main** only; not yet published. Compare to the latest tag on [GitHub Releases](https://github.com/Cod-e-Codes/marchat_flutter/releases).
+
+**Targets marchat v1.3.8** server line (use a matching marchat server for full protocol parity).
+
+
+### Changes
+- Align Flutter client with marchat v1.3.8 content cap
+
+Reject oversized chat, DM, edit, search, and command bodies at 32 KiB by default, including E2E ciphertext, without changing the file upload limit. Pin verified GitHub Actions SHAs from PR #7. ([Cod-e-Codes](https://github.com/Cod-e-Codes))
+
+
 ## 1.3.6 - 2026-09-01
 
 **marchat server line:** 1.3.6 (use a matching or newer marchat server build for full compatibility).
